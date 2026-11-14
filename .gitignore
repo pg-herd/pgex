@@ -1,0 +1,21 @@
+# Cargo build output
+/target/
+
+# Local benchmark code, fixtures, and runs
+/POC/
+
+# macOS filesystem metadata
+.DS_Store
+._*
+
+# Local VS Code workspace files
+/.vscode/*
+!/.vscode/extensions.json
+
+# Local environment files that can contain PostgreSQL credentials
+.env
+.env.*
+!.env.example
+
+# Internal design notes (local only)
+/docs/
