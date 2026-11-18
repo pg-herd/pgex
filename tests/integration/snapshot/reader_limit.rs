@@ -1,3 +1,4 @@
+use pgex::connection::Row;
 use std::{future::poll_fn, num::NonZeroUsize, task::Poll};
 
 use anyhow::{Result, ensure};
@@ -28,7 +29,7 @@ async fn waits_for_a_source_reader_slot_and_releases_it_after_cancellation() -> 
 
                     let mut second = Box::pin(readers.with_reader(async |session| {
                         let row = session.client().query_one("SELECT 1", &[]).await?;
-                        row.try_get::<_, i32>(0)
+                        row.try_get::<i32, _>(0)
                     }));
                     poll_fn(|context| {
                         assert!(second.as_mut().poll(context).is_pending());

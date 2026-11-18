@@ -1,5 +1,4 @@
 use anyhow::Result;
-use tokio_postgres::error::SqlState;
 
 use crate::connection::{Connector, Session};
 
@@ -41,9 +40,16 @@ pub async fn lock_for_read(session: &Session, tables: &[QualifiedTable]) -> Resu
         .map_err(|error| describe_lock_failure(tables, error))
 }
 
-fn describe_lock_failure(tables: &[QualifiedTable], error: tokio_postgres::Error) -> anyhow::Error {
-    if let Some(database_error) = error.as_db_error()
-        && let Some(table) = missing_table(tables, database_error.code(), database_error.message())
+fn describe_lock_failure(
+    tables: &[QualifiedTable],
+    error: crate::connection::Error,
+) -> anyhow::Error {
+    if let Some(database_error) = error.as_database_error()
+        && let Some(table) = missing_table(
+            tables,
+            database_error.code().as_deref().unwrap_or(""),
+            database_error.message(),
+        )
     {
         return anyhow::Error::new(error).context(format!("Table {} does not exist", table.sql()));
     }
@@ -52,12 +58,12 @@ fn describe_lock_failure(tables: &[QualifiedTable], error: tokio_postgres::Error
 
 fn missing_table<'a>(
     tables: &'a [QualifiedTable],
-    code: &SqlState,
+    code: &str,
     message: &str,
 ) -> Option<&'a QualifiedTable> {
     // These PostgreSQL lookup errors put the object name in the message.
-    match *code {
-        SqlState::UNDEFINED_TABLE => {
+    match code {
+        "42P01" => {
             let mut matches = tables.iter().filter(|table| {
                 message
                     == format!(
@@ -70,7 +76,7 @@ fn missing_table<'a>(
             // A dot inside an identifier can make two qualified names look identical.
             (!matches.any(|table| table != first)).then_some(first)
         }
-        SqlState::UNDEFINED_SCHEMA => tables
+        "3F000" => tables
             .iter()
             .find(|table| message == format!("schema \"{}\" does not exist", table.schema())),
         _ => None,

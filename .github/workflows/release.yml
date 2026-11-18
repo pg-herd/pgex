@@ -49,10 +49,10 @@ jobs:
         env:
           MACOSX_DEPLOYMENT_TARGET: '15.0'
         run: |
-          brew install openssl@3
           toolchain=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])')
           rustup toolchain install "$toolchain" --profile minimal --target "$RUST_TARGET"
-          export OPENSSL_DIR="$(brew --prefix openssl@3)"
+          brew install libpq
+          export PQ_LIB_DIR="$(brew --prefix libpq)/lib"
           cargo build --release --locked --target "$RUST_TARGET"
           mkdir -p release-output
           cp "target/$RUST_TARGET/release/pgex" release-output/

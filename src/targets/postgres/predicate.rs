@@ -1,8 +1,8 @@
 use std::fmt::Display;
 
+use crate::connection::QueryParameter;
 use anyhow::{Context, Result, ensure};
 use postgres_protocol::escape::escape_literal;
-use tokio_postgres::types::{ToSql, Type};
 
 use crate::predicate::{Predicate, parameters::parsing::ParameterValue};
 
@@ -34,15 +34,15 @@ pub(super) fn copy_condition(predicate: &Predicate) -> Result<String> {
     Ok(condition)
 }
 
-pub(super) fn bind_value(value: &ParameterValue) -> (&(dyn ToSql + Sync), Type) {
+pub(super) fn bind_value(value: &ParameterValue) -> &(dyn QueryParameter + Sync) {
     match value {
-        ParameterValue::Text(value) => (value, Type::TEXT),
-        ParameterValue::Integer(value) => (value, Type::INT4),
-        ParameterValue::Bigint(value) => (value, Type::INT8),
-        ParameterValue::Boolean(value) => (value, Type::BOOL),
-        ParameterValue::Date(value) => (value, Type::DATE),
-        ParameterValue::IntegerArray(value) => (value, Type::INT4_ARRAY),
-        ParameterValue::BigintArray(value) => (value, Type::INT8_ARRAY),
+        ParameterValue::Text(value) => value,
+        ParameterValue::Integer(value) => value,
+        ParameterValue::Bigint(value) => value,
+        ParameterValue::Boolean(value) => value,
+        ParameterValue::Date(value) => value,
+        ParameterValue::IntegerArray(value) => value,
+        ParameterValue::BigintArray(value) => value,
     }
 }
 

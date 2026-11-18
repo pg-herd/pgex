@@ -1,7 +1,9 @@
+use crate::postgres::sql_state;
+use pgex::connection::Row;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use tokio_postgres::{Client, error::SqlState};
+use pgex::connection::Client;
 
 use pgex::snapshot::{SnapshotOptions, SnapshotScopeError, SnapshotTimeouts};
 
@@ -39,7 +41,7 @@ async fn disconnect_check_interval_override_is_limited_to_snapshot_work() -> Res
     .await
 }
 
-async fn connection_check_interval(client: &Client) -> Result<i32, tokio_postgres::Error> {
+async fn connection_check_interval(client: &Client) -> Result<i32, pgex::connection::Error> {
     let row = client
         .query_one(
             "SELECT setting::integer FROM pg_settings WHERE name = 'client_connection_check_interval'",
@@ -89,7 +91,7 @@ async fn readers_disable_inherited_timeouts_and_apply_explicit_overrides() -> Re
     .await
 }
 
-async fn read_timeouts(client: &Client) -> Result<[i32; 2], tokio_postgres::Error> {
+async fn read_timeouts(client: &Client) -> Result<[i32; 2], pgex::connection::Error> {
     let rows = client
         .query(
             "SELECT setting::integer FROM pg_settings
@@ -132,7 +134,7 @@ async fn reader_transaction_timeout_replaces_inherited_timer_and_stops_active_wo
                     };
                     assert!(
                         matches!(failure.as_ref(), SnapshotScopeError::Work(error)
-                if error.code().is_some_and(|code| code.code() == TRANSACTION_TIMEOUT_SQLSTATE)),
+                if sql_state(error).as_deref() == Some(TRANSACTION_TIMEOUT_SQLSTATE)),
                         "{failure:?}"
                     );
 
@@ -153,10 +155,9 @@ async fn reader_transaction_timeout_replaces_inherited_timer_and_stops_active_wo
 #[tokio::test]
 async fn exporter_timeouts_release_its_session_while_work_is_pending() -> Result<()> {
     with_snapshot_database(async |snapshots, _| {
-        for (transaction_ms, idle_in_transaction_ms, expected_code) in [
-            (750, 0, TRANSACTION_TIMEOUT_SQLSTATE),
-            (0, 350, SqlState::IDLE_IN_TRANSACTION_SESSION_TIMEOUT.code()),
-        ] {
+        for (transaction_ms, idle_in_transaction_ms, expected_code) in
+            [(750, 0, TRANSACTION_TIMEOUT_SQLSTATE), (0, 350, "25P03")]
+        {
             let exporter_timeouts = SnapshotTimeouts {
                 transaction_ms,
                 idle_in_transaction_ms,
@@ -173,9 +174,9 @@ async fn exporter_timeouts_release_its_session_while_work_is_pending() -> Result
                 .context("Snapshot scope kept running after the exporter timeout")?;
             assert!(
                 matches!(&result, Err(SnapshotScopeError::ExporterLost(error))
-                    if error.downcast_ref::<tokio_postgres::Error>()
-                        .and_then(tokio_postgres::Error::code)
-                        .is_some_and(|code| code.code() == expected_code)),
+                    if error.downcast_ref::<pgex::connection::Error>()
+                        .and_then(sql_state).as_deref()
+                        .is_some_and(|code| code == expected_code)),
                 "{exporter_timeouts:?}: {result:?}"
             );
         }

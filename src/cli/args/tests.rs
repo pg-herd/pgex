@@ -1,4 +1,5 @@
 use clap::error::ErrorKind;
+use pgex::config::snapshot_mode::SnapshotMode;
 
 use super::{Cli, Parser, VarError, resolve_password};
 
@@ -19,12 +20,15 @@ fn omitted_cli_settings_are_left_for_the_compiler() {
     assert!(settings.target.connection.user.is_none());
     assert!(settings.source.selection.tables.is_none());
     assert!(settings.source.session.row_security_off.is_none());
+    assert!(settings.source.snapshot.mode.is_none());
     assert!(settings.source.snapshot.reader_connection_limit.is_none());
     assert!(settings.target.session.row_security_off.is_none());
     assert!(settings.target.session.replica_role.is_none());
     assert!(settings.target.transfer.workers.is_none());
     assert!(settings.target.transfer.validate_layouts.is_none());
+    assert!(settings.target.transfer.no_locks.is_none());
     assert!(settings.target.transfer.skip_delete.is_none());
+    assert!(settings.target.transfer.truncate.is_none());
 }
 
 #[test]
@@ -60,6 +64,8 @@ fn preserves_bare_switches_and_explicit_false() {
         "--target-row-security-off",
         "--target-replica-role=false",
         "--target-skip-delete",
+        "--target-truncate",
+        "--no-target-locks",
         "--target-validate-layouts",
         "false",
     ])
@@ -73,7 +79,35 @@ fn preserves_bare_switches_and_explicit_false() {
     assert_eq!(settings.target.session.row_security_off, Some(true));
     assert_eq!(settings.target.session.replica_role, Some(false));
     assert_eq!(settings.target.transfer.skip_delete, Some(true));
+    assert_eq!(settings.target.transfer.truncate, Some(true));
+    assert_eq!(settings.target.transfer.no_locks, Some(true));
     assert_eq!(settings.target.transfer.validate_layouts, Some(false));
+}
+
+#[test]
+fn accepts_the_two_source_snapshot_modes_and_requires_a_value() {
+    for (value, expected) in [
+        ("shared", SnapshotMode::Shared),
+        ("per-statement", SnapshotMode::PerStatement),
+    ] {
+        let settings = Cli::try_parse_from(["pgex", "--source-snapshot", value])
+            .unwrap()
+            .into_input()
+            .unwrap()
+            .input
+            .settings;
+        assert_eq!(settings.source.snapshot.mode, Some(expected));
+    }
+
+    for args in [
+        &["pgex", "--source-snapshot"][..],
+        &["pgex", "--source-snapshot=off"],
+    ] {
+        let Err(error) = Cli::try_parse_from(args) else {
+            panic!("Invalid source snapshot mode was accepted");
+        };
+        assert_eq!(error.kind(), ErrorKind::InvalidValue);
+    }
 }
 
 #[test]

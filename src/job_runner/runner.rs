@@ -4,7 +4,7 @@ use pgex::{
     catalog::CatalogReader,
     config::compiled::SourceFilterPolicy,
     plan::planner::plan_source_tables,
-    snapshot::{SnapshotLease, SnapshotOptions},
+    snapshot::{SnapshotLease, SnapshotOptions, SourceReadMode},
     table::QualifiedTable,
     targets::Target,
 };
@@ -27,6 +27,7 @@ impl<T: Target> JobRunner<T> {
     pub(crate) async fn run(
         &self,
         options: SnapshotOptions<'_>,
+        read_mode: SourceReadMode,
         filters: &SourceFilterPolicy,
     ) -> Result<()> {
         let tables = self.table_list(options.tables).await?;
@@ -35,7 +36,7 @@ impl<T: Target> JobRunner<T> {
             ..options
         };
         self.snapshots
-            .with_snapshot(options, async |readers| {
+            .with_readers(options, read_mode, async |readers| {
                 let source_layouts = readers
                     .with_reader(async |session| {
                         self.catalog.read_tables_on(session, &tables).await

@@ -5,6 +5,7 @@ use crate::{
     config::{
         compiler::compile_config,
         input::{CliInput, PredicateInput, PredicateOrigin},
+        snapshot_mode::SnapshotMode,
     },
     predicate::{parameters::validation::ParameterOrigin, parser::parse_predicate},
 };
@@ -24,6 +25,7 @@ source:
   session:
     row_security_off: false
   snapshot:
+    mode: per-statement
     reader_connection_limit: 3
     exporter_timeouts:
       transaction_ms: 0
@@ -48,6 +50,8 @@ target:
   transfer:
     workers: 4
     validate_layouts: false
+    no_locks: true
+    truncate: true
   delete_filters:
     public.orders: "billing_id = {{id:bigint}}"
 params:
@@ -67,6 +71,10 @@ params:
         Some(Path::new("ca.pem"))
     );
     assert_eq!(settings.source.session.row_security_off, Some(false));
+    assert_eq!(
+        settings.source.snapshot.mode,
+        Some(SnapshotMode::PerStatement)
+    );
     assert_eq!(
         settings
             .source
@@ -118,6 +126,8 @@ params:
     assert_eq!(settings.target.session.replica_role, Some(true));
     assert_eq!(settings.target.transfer.workers.unwrap().get(), 4);
     assert_eq!(settings.target.transfer.validate_layouts, Some(false));
+    assert_eq!(settings.target.transfer.no_locks, Some(true));
+    assert_eq!(settings.target.transfer.truncate, Some(true));
     assert_eq!(
         settings.target.delete_filters.unwrap()[0]
             .condition

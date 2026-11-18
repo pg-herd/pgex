@@ -1,5 +1,6 @@
+use super::Client;
 use anyhow::{Context, Result};
-use tokio::task::AbortHandle;
+use std::sync::Arc;
 
 use super::Session;
 
@@ -11,7 +12,7 @@ impl Session {
         &mut self,
         work: impl AsyncFnOnce(&Session) -> Result<T>,
     ) -> Result<T> {
-        let mut close_on_drop = CloseSessionOnDrop(Some(self.abort_handle()));
+        let mut close_on_drop = CloseSessionOnDrop(Some(Arc::clone(&self.client)));
         let client = self.client();
         client
             .batch_execute("BEGIN")
@@ -38,12 +39,12 @@ impl Session {
     }
 }
 
-struct CloseSessionOnDrop(Option<AbortHandle>);
+struct CloseSessionOnDrop(Option<Arc<Client>>);
 
 impl Drop for CloseSessionOnDrop {
     fn drop(&mut self) {
-        if let Some(driver) = &self.0 {
-            driver.abort();
+        if let Some(client) = &self.0 {
+            client.abort();
         }
     }
 }

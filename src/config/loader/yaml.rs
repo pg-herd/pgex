@@ -70,7 +70,9 @@ fn file_settings(document: schema::Document, path: &Path) -> Result<ConfigInput>
                 workers: target.transfer.workers,
                 commit_group_mib: target.transfer.commit_group_mib,
                 validate_layouts: target.transfer.validate_layouts,
+                no_locks: target.transfer.no_locks,
                 skip_delete: target.transfer.skip_delete,
+                truncate: target.transfer.truncate,
             },
             delete_filters: target
                 .delete_filters
@@ -93,7 +95,7 @@ fn connection(input: schema::Connection, field: &str) -> Result<ConnectionInput>
     if let Some(url) = &input.url {
         ensure!(
             (url.starts_with("postgresql://") || url.starts_with("postgres://"))
-                && url.parse::<tokio_postgres::Config>().is_ok(),
+                && crate::connection::validate_connection_string(url).is_ok(),
             "{field} must be a valid PostgreSQL URL"
         );
     }
@@ -107,6 +109,7 @@ fn connection(input: schema::Connection, field: &str) -> Result<ConnectionInput>
 
 fn snapshot(input: schema::Snapshot) -> Result<SnapshotInput> {
     Ok(SnapshotInput {
+        mode: input.mode,
         reader_connection_limit: input.reader_connection_limit,
         client_connection_check_interval_ms: milliseconds(
             input.client_connection_check_interval_ms,

@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
+use crate::connection::{Row, RowData};
 use anyhow::{Context, Result, ensure};
-use tokio_postgres::Row;
 
 use crate::{connection::Session, table::QualifiedTable};
 
@@ -53,7 +53,7 @@ pub(super) async fn read_tables_on(
 
     let (schemas, names): (Vec<_>, Vec<_>) = tables
         .iter()
-        .map(|table| (table.schema(), table.table()))
+        .map(|table| (table.schema().to_owned(), table.table().to_owned()))
         .unzip();
     let rows = connection
         .client()
@@ -88,22 +88,22 @@ struct LayoutRow {
     column: Option<ColumnLayout>,
 }
 
-impl TryFrom<Row> for LayoutRow {
+impl TryFrom<RowData> for LayoutRow {
     type Error = anyhow::Error;
 
-    fn try_from(row: Row) -> Result<Self> {
+    fn try_from(row: RowData) -> Result<Self> {
         Ok(Self {
             table_name: QualifiedTable::from_catalog(
                 row.try_get("schema_name")?,
                 row.try_get("table_name")?,
             ),
-            relation_oid: row.try_get("relation_oid")?,
+            relation_oid: row.try_get::<u32, _>("relation_oid")?,
             column: read_column(&row)?,
         })
     }
 }
 
-fn read_column(row: &Row) -> Result<Option<ColumnLayout>> {
+fn read_column(row: &RowData) -> Result<Option<ColumnLayout>> {
     let Some(name) = row.try_get("column_name")? else {
         return Ok(None);
     };

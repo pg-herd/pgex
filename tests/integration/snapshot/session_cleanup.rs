@@ -1,8 +1,10 @@
+use crate::postgres::sql_state;
+use pgex::connection::Row;
 use std::{convert::Infallible, future::pending, time::Duration};
 
 use anyhow::{Context, Result, ensure};
+use pgex::connection::Client;
 use tokio::sync::oneshot;
-use tokio_postgres::{Client, error::SqlState};
 
 use pgex::{
     connection::Connector,
@@ -19,7 +21,7 @@ async fn closes_snapshot_sessions_after_success() -> Result<()> {
                 readers
                     .with_reader(async |session| {
                         session.client().query_one("SELECT 1", &[]).await?;
-                        Ok::<_, tokio_postgres::Error>(())
+                        Ok::<_, pgex::connection::Error>(())
                     })
                     .await
             })
@@ -79,8 +81,8 @@ async fn closes_exporting_session_when_postgresql_rejects_the_lock() -> Result<(
         ensure!(
             matches!(result, Err(SnapshotScopeError::Setup(ref error))
                 if error.to_string() == r#"Table "public"."pgex_snapshot_missing_lock_target" does not exist"#
-                    && error.downcast_ref::<tokio_postgres::Error>().and_then(|error| error.code())
-                    == Some(&SqlState::UNDEFINED_TABLE)),
+                    && error.downcast_ref::<pgex::connection::Error>().and_then(sql_state).as_deref()
+                    == Some("42P01")),
             "expected a missing table error, got {result:?}"
         );
         assert_sessions_closed(observer).await
@@ -143,8 +145,8 @@ async fn closes_exporting_session_when_postgresql_rejects_snapshot_export() -> R
 
     ensure!(
         matches!(result, Err(SnapshotScopeError::Setup(ref error))
-            if error.downcast_ref::<tokio_postgres::Error>().and_then(|error| error.code())
-                == Some(&SqlState::INSUFFICIENT_PRIVILEGE)),
+            if error.downcast_ref::<pgex::connection::Error>().and_then(sql_state).as_deref()
+                == Some("42501")),
         "expected a snapshot export permission error, got {result:?}"
     );
     assert_sessions_closed(observer.client()).await?;
@@ -239,15 +241,15 @@ async fn exporter_timeout_closes_worker_sessions_and_rolls_back_destination_writ
         .context("The worker did not complete the write before the timeout")?;
     assert!(
         matches!(&result, Err(SnapshotScopeError::ExporterLost(error))
-        if error.downcast_ref::<tokio_postgres::Error>().and_then(tokio_postgres::Error::code)
-            == Some(&SqlState::IDLE_IN_TRANSACTION_SESSION_TIMEOUT)),
+        if error.downcast_ref::<pgex::connection::Error>().and_then(sql_state).as_deref()
+            == Some("25P03")),
         "{result:?}"
     );
     assert_sessions_closed(observer).await?;
     let row = observer
         .query_one("SELECT payload FROM public.exporter_loss_probe", &[])
         .await?;
-    assert_eq!(row.get::<_, &str>(0), "original");
+    assert_eq!(row.get::<&str, _>(0), "original");
     observer_session.close().await;
     Ok(())
 }
@@ -287,7 +289,7 @@ async fn preserves_work_error_when_reader_rollback_fails() -> Result<()> {
                     if error.to_string() == WORK_FAILURE),
                     "expected the original work error"
                 );
-                assert_eq!(error.to_string(), "Roll back snapshot reader");
+                assert_eq!(error.to_string(), "Roll back source reader");
                 Ok::<_, anyhow::Error>(())
             })
             .await?;
@@ -365,7 +367,7 @@ async fn wait_for_active_query(observer: &Client, query: &str) -> Result<()> {
                 .await?
                 .get(0);
             if active {
-                return Ok::<_, tokio_postgres::Error>(());
+                return Ok::<_, pgex::connection::Error>(());
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -389,7 +391,7 @@ async fn assert_sessions_closed(observer: &Client) -> Result<()> {
                 .await?
                 .get(0);
             if sessions == 0 {
-                return Ok::<(), tokio_postgres::Error>(());
+                return Ok::<(), pgex::connection::Error>(());
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }

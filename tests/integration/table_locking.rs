@@ -1,6 +1,7 @@
+use crate::postgres::sql_state;
 use anyhow::{Result, bail};
+use pgex::connection::Row;
 use pgex::table::with_locked_tables;
-use tokio_postgres::error::SqlState;
 
 use super::postgres::PostgresTestDatabase;
 
@@ -31,7 +32,7 @@ async fn table_locks_survive_worker_commits_and_release_on_callback_failure() ->
             .client()
             .batch_execute("ALTER TABLE public.lock_probe ADD COLUMN value text")
             .await;
-        assert!(matches!(alter, Err(error) if error.code() == Some(&SqlState::LOCK_NOT_AVAILABLE)));
+        assert!(matches!(alter, Err(error) if sql_state(&error).as_deref() == Some("55P03")));
         bail!("abort lock scope")
     })
     .await;

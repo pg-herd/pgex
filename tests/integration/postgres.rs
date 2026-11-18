@@ -1,7 +1,6 @@
 use std::io::Write;
 
 use anyhow::{Context, Result};
-use openssl::rand::rand_bytes;
 use pgex::connection::Connector;
 use tempfile::NamedTempFile;
 use testcontainers::{
@@ -15,6 +14,8 @@ const TLS_ENTRYPOINT: &str = r#"
 umask 077
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=localhost \
     -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1' \
+    -addext 'basicConstraints=critical,CA:FALSE' \
+    -addext 'extendedKeyUsage=serverAuth' \
     -keyout /tmp/pgex-server.key -out /tmp/pgex-server.crt
 chown postgres:postgres /tmp/pgex-server.key /tmp/pgex-server.crt
 exec docker-entrypoint.sh postgres -c ssl=on \
@@ -44,7 +45,7 @@ impl PostgresTestDatabase {
 
     pub(super) async fn start() -> Result<Self> {
         let mut password_bytes = [0; 16];
-        rand_bytes(&mut password_bytes)?;
+        getrandom::fill(&mut password_bytes).map_err(|error| anyhow::anyhow!("{error}"))?;
         let password = format!("{:032x}", u128::from_be_bytes(password_bytes));
 
         let container = GenericImage::new("postgres", "17.11-bookworm")
@@ -82,4 +83,8 @@ impl PostgresTestDatabase {
             ca,
         })
     }
+}
+
+pub(super) fn sql_state(error: &pgex::connection::Error) -> Option<std::borrow::Cow<'_, str>> {
+    error.as_database_error().and_then(|error| error.code())
 }

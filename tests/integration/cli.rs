@@ -1,3 +1,4 @@
+use pgex::connection::Row;
 use std::path::Path;
 
 use anyhow::Result;
@@ -79,7 +80,7 @@ async fn cli_and_yaml_users_take_precedence_on_each_connection() -> Result<()> {
             .client()
             .query_one("SELECT id FROM public.events", &[])
             .await?;
-        assert_eq!(row.get::<_, i32>(0), id);
+        assert_eq!(row.get::<i32, _>(0), id);
     }
 
     source_session.close().await;
@@ -190,7 +191,7 @@ async fn password_precedence_applies_independently_to_source_and_target() -> Res
             .client()
             .query_one("SELECT id FROM public.events", &[])
             .await?;
-        assert_eq!(row.get::<_, i32>(0), id);
+        assert_eq!(row.get::<i32, _>(0), id);
     }
 
     source_session.close().await;
@@ -259,7 +260,7 @@ async fn cli_validates_destination_layouts_and_reports_mismatches() -> Result<()
          CREATE TABLE public.events (company_id bigint, priority public.priority NOT NULL);",
         )
         .await?;
-    let mismatch = run().output().await?;
+    let mismatch = run().arg("--no-target-locks").output().await?;
     assert!(!mismatch.status.success());
     let error = String::from_utf8_lossy(&mismatch.stderr);
     assert!(
@@ -296,7 +297,7 @@ async fn cli_validates_destination_layouts_and_reports_mismatches() -> Result<()
         .client()
         .query_one("SELECT priority::text FROM public.events", &[])
         .await?;
-    assert_eq!(row.get::<_, String>(0), "low");
+    assert_eq!(row.get::<String, _>(0), "low");
 
     target_session
         .client()
@@ -436,5 +437,31 @@ async fn omitted_table_list_locks_discovered_tables_but_explicit_list_only_locks
     assert!(!discovered.status.success());
     let error = String::from_utf8_lossy(&discovered.stderr);
     assert!(error.contains("lock timeout"), "{error}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn ambient_pgpassword_does_not_replace_missing_pgex_credentials() -> Result<()> {
+    let database = PostgresTestDatabase::start().await?;
+    let output = Command::new(env!("CARGO_BIN_EXE_pgex"))
+        .args([
+            "--source",
+            &database.connection_string,
+            "--target",
+            &database.connection_string,
+        ])
+        .arg("--ca")
+        .arg(database.ca.path())
+        .arg("--target-ca")
+        .arg(database.ca.path())
+        .args(["--tables", "public.missing"])
+        .env_remove("PGEX_SOURCE_PASSWORD")
+        .env_remove("PGEX_TARGET_PASSWORD")
+        .env("PGPASSWORD", &database.password)
+        .output()
+        .await?;
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(error.contains("no password supplied"), "{error}");
     Ok(())
 }

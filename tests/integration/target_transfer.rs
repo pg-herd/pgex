@@ -1,10 +1,220 @@
+use crate::postgres::sql_state;
+use pgex::connection::Row;
 use std::{process::Stdio, time::Duration};
 
 use anyhow::{Context, Result};
+use pgex::connection::Client;
 use tokio::process::Command;
-use tokio_postgres::{Client, error::SqlState};
 
 use super::postgres::PostgresTestDatabase;
+
+#[tokio::test]
+async fn rolls_back_on_the_same_connection_after_copy_in_startup_fails() -> Result<()> {
+    let database = PostgresTestDatabase::start().await?;
+    let session = database.connector().await?.connect().await?;
+    let client = session.client();
+    client
+        .batch_execute(
+            "CREATE TABLE public.items (id integer); INSERT INTO public.items VALUES (1)",
+        )
+        .await?;
+
+    client
+        .batch_execute("BEGIN; DELETE FROM public.items")
+        .await?;
+    let error = {
+        let mut connection = client.connection().await?;
+        connection
+            .get()
+            .await?
+            .copy_in_raw("COPY public.missing FROM STDIN")
+            .await
+            .err()
+    }
+    .context("COPY should fail at startup for a missing table")?;
+    assert_eq!(sql_state(&error).as_deref(), Some("42P01"));
+    client.batch_execute("ROLLBACK").await?;
+    let id: i32 = client
+        .query_one("SELECT id FROM public.items", &[])
+        .await?
+        .get(0);
+    assert_eq!(id, 1);
+
+    session.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn rolls_back_on_same_connection_after_aborting_copy_sink() -> Result<()> {
+    let database = PostgresTestDatabase::start().await?;
+    let session = database.connector().await?.connect().await?;
+    let client = session.client();
+    client
+        .batch_execute(
+            "CREATE TABLE public.items (id integer); INSERT INTO public.items VALUES (1)",
+        )
+        .await?;
+    client
+        .batch_execute("BEGIN; DELETE FROM public.items")
+        .await?;
+    {
+        let mut connection = client.connection().await?;
+        let mut sink = connection
+            .get()
+            .await?
+            .copy_in_raw("COPY public.items FROM STDIN (FORMAT TEXT)")
+            .await?;
+        sink.send(bytes::Bytes::from_static(b"2\n")).await?;
+        sink.abort("Intentional COPY cancellation").await?;
+    }
+    tokio::time::timeout(Duration::from_secs(5), client.batch_execute("ROLLBACK")).await??;
+    let id: i32 = client
+        .query_one("SELECT id FROM public.items", &[])
+        .await?
+        .get(0);
+    assert_eq!(id, 1);
+    session.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn closing_after_failed_copy_out_startup_rolls_back_the_transaction() -> Result<()> {
+    let database = PostgresTestDatabase::start().await?;
+    let connector = database.connector().await?;
+    let observer = connector.connect().await?;
+    observer
+        .client()
+        .batch_execute(
+            "CREATE TABLE public.items (id integer); INSERT INTO public.items VALUES (1)",
+        )
+        .await?;
+    let session = connector.connect().await?;
+    session
+        .client()
+        .batch_execute("BEGIN; DELETE FROM public.items")
+        .await?;
+    let error = {
+        let mut connection = session.client().connection().await?;
+        connection
+            .get()
+            .await?
+            .copy_out_raw("COPY public.missing TO STDOUT")
+            .await
+            .err()
+    }
+    .context("Expected source COPY startup to fail")?;
+    assert_eq!(sql_state(&error).as_deref(), Some("42P01"));
+    // Closing a failed source COPY session must roll back its transaction
+    // and release the locks even if no COPY stream was returned.
+    session.close().await;
+    let id: i32 = observer
+        .client()
+        .query_one("SELECT id FROM public.items", &[])
+        .await?
+        .get(0);
+    assert_eq!(id, 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn dropping_session_with_unfinished_copy_restores_destination_rows() -> Result<()> {
+    let database = PostgresTestDatabase::start().await?;
+    let connector = database.connector().await?;
+    let observer = connector.connect().await?;
+    observer
+        .client()
+        .batch_execute(
+            "CREATE TABLE public.items (id integer); INSERT INTO public.items VALUES (1)",
+        )
+        .await?;
+    let session = connector.connect().await?;
+    session
+        .client()
+        .batch_execute("BEGIN; DELETE FROM public.items")
+        .await?;
+    {
+        let mut connection = session.client().connection().await?;
+        let mut copy = connection
+            .get()
+            .await?
+            .copy_in_raw("COPY public.items FROM STDIN")
+            .await?;
+        copy.send(bytes::Bytes::from_static(b"2\n")).await?;
+    }
+    drop(session);
+    let id: i32 = tokio::time::timeout(Duration::from_secs(5), async {
+        observer
+            .client()
+            .query_one("SELECT id FROM public.items FOR UPDATE", &[])
+            .await
+            .map(|row| row.get(0))
+    })
+    .await??;
+    assert_eq!(id, 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn uses_shared_snapshot_by_default_and_applies_explicit_snapshot_modes() -> Result<()> {
+    let (source, target) =
+        tokio::try_join!(PostgresTestDatabase::start(), PostgresTestDatabase::start())?;
+    let source_session = source.connector().await?.connect().await?;
+    let target_session = target.connector().await?.connect().await?;
+    let schema = "CREATE TABLE public.items (id integer PRIMARY KEY, isolation text)";
+    source_session.client().batch_execute(schema).await?;
+    target_session.client().batch_execute(schema).await?;
+    source_session
+        .client()
+        .batch_execute(
+            "INSERT INTO public.items VALUES (1, 'read committed'), (2, 'repeatable read')",
+        )
+        .await?;
+
+    let config = tempfile::NamedTempFile::new()?;
+    std::fs::write(config.path(), "source: {snapshot: {mode: per-statement}}")?;
+    let config_path = config.path().to_str().context("Read test config path")?;
+
+    for (snapshot_args, expected_id) in [
+        (&[][..], 2),
+        (&["--source-snapshot", "per-statement"][..], 1),
+        (&["--config", config_path][..], 1),
+        (
+            &["--config", config_path, "--source-snapshot", "shared"][..],
+            2,
+        ),
+    ] {
+        target_session
+            .client()
+            .batch_execute("TRUNCATE public.items")
+            .await?;
+        let output = sync_command(&source, &source.connection_string, &target)
+            .args([
+                "--tables",
+                "public.items",
+                "--where",
+                "isolation = pg_catalog.current_setting('transaction_isolation')",
+                "--target-skip-delete",
+            ])
+            .args(snapshot_args)
+            .output()
+            .await?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let rows = target_session
+            .client()
+            .query("SELECT id FROM public.items ORDER BY id", &[])
+            .await?;
+        let ids: Vec<i32> = rows.iter().map(|row| row.get(0)).collect();
+        assert_eq!(ids, [expected_id]);
+    }
+
+    source_session.close().await;
+    target_session.close().await;
+    Ok(())
+}
 
 #[tokio::test]
 async fn applies_a_delete_filter_separately_from_a_copy_predicate() -> Result<()> {
@@ -57,7 +267,7 @@ async fn applies_a_delete_filter_separately_from_a_copy_predicate() -> Result<()
         .await?;
     let values: Vec<_> = rows
         .iter()
-        .map(|row| (row.get::<_, i32>(0), row.get::<_, &str>(1)))
+        .map(|row| (row.get::<i32, _>(0), row.get::<&str, _>(1)))
         .collect();
     assert_eq!(values, [(1, label), (4, "keep")]);
     source_session.close().await;
@@ -98,7 +308,7 @@ async fn refreshes_the_entire_table_without_a_filter_or_company_column() -> Resu
         .await?;
     let values: Vec<_> = rows
         .iter()
-        .map(|row| (row.get::<_, i32>(0), row.get::<_, &str>(1)))
+        .map(|row| (row.get::<i32, _>(0), row.get::<&str, _>(1)))
         .collect();
     assert_eq!(values, [(1, "first"), (2, "second")]);
     source_session.close().await;
@@ -249,6 +459,84 @@ async fn skip_delete_preserves_destination_rows_and_inserts_selected_rows() -> R
 }
 
 #[tokio::test]
+async fn truncate_commits_before_filtered_copy_and_cascades() -> Result<()> {
+    let (source, mut target) =
+        tokio::try_join!(PostgresTestDatabase::start(), PostgresTestDatabase::start())?;
+    let source_session = source.connector().await?.connect().await?;
+    let target_session = target.connector().await?.connect().await?;
+    source_session
+        .client()
+        .batch_execute(
+            "CREATE TABLE public.items (id integer PRIMARY KEY);
+                        INSERT INTO public.items VALUES (1), (2)",
+        )
+        .await?;
+    let target_client = target_session.client();
+    target_client
+        .batch_execute(
+            "CREATE TABLE public.items (id integer PRIMARY KEY);
+                        CREATE TABLE public.children (item_id integer REFERENCES public.items);
+                        INSERT INTO public.items VALUES (9);
+                        INSERT INTO public.children VALUES (9)",
+        )
+        .await?;
+
+    target
+        .connection_string
+        .push_str("?options=-c%20log_statement%3Dall");
+    let run = || {
+        let mut command = sync_command(&source, &source.connection_string, &target);
+        command.args([
+            "--tables",
+            "public.items",
+            "--where",
+            "id = 1",
+            "--target-truncate",
+        ]);
+        command
+    };
+    let result = run().output().await?;
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let row = target_client
+        .query_one(
+            "SELECT ARRAY(SELECT id FROM public.items), (SELECT count(*) FROM public.children)",
+            &[],
+        )
+        .await?;
+    assert_eq!(row.get::<Vec<i32>, _>(0), [1]);
+    assert_eq!(row.get::<i64, _>(1), 0);
+    let log = target.stderr().await?;
+    let truncate = log
+        .find(r#"statement: TRUNCATE "public"."items" CASCADE"#)
+        .context("Expected simple-query TRUNCATE")?;
+    assert!(
+        log[truncate..].contains(r#"statement: COPY "public"."items""#),
+        "{log}"
+    );
+
+    target_client
+        .batch_execute(
+            "UPDATE public.items SET id = 9;
+                        ALTER TABLE public.items ADD CHECK (id > 8)",
+        )
+        .await?;
+    let result = run().output().await?;
+    assert!(!result.status.success());
+    let error = String::from_utf8_lossy(&result.stderr);
+    assert!(error.contains("violates check constraint"), "{error}");
+    let remaining: i64 = target_client
+        .query_one("SELECT count(*) FROM public.items", &[])
+        .await?
+        .get(0);
+    assert_eq!(remaining, 0);
+    Ok(())
+}
+
+#[tokio::test]
 async fn exporter_timeout_during_copy_closes_workers_and_restores_destination_rows() -> Result<()> {
     let (source, target) =
         tokio::try_join!(PostgresTestDatabase::start(), PostgresTestDatabase::start())?;
@@ -339,7 +627,7 @@ async fn exporter_timeout_during_copy_closes_workers_and_restores_destination_ro
         )
         .await;
     assert!(
-        matches!(&original_row, Err(error) if error.code() == Some(&SqlState::LOCK_NOT_AVAILABLE)),
+        matches!(&original_row, Err(error) if sql_state(error).as_deref() == Some("55P03")),
         "Expected the original row to be locked by the worker's DELETE, got {original_row:?}"
     );
 
@@ -349,7 +637,7 @@ async fn exporter_timeout_during_copy_closes_workers_and_restores_destination_ro
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!output.status.success());
     assert!(
-        stderr.contains("Source snapshot exporter disconnected")
+        stderr.contains("Source table lock session disconnected")
             && stderr.contains("idle-in-transaction timeout"),
         "{stderr}"
     );
@@ -366,7 +654,7 @@ async fn exporter_timeout_during_copy_closes_workers_and_restores_destination_ro
         .await?;
     let rows: Vec<_> = rows
         .iter()
-        .map(|row| (row.get::<_, i32>(0), row.get::<_, &str>(1)))
+        .map(|row| (row.get::<i32, _>(0), row.get::<&str, _>(1)))
         .collect();
     assert_eq!(rows, [(-1, "original"), (-2, "other tenant")]);
     Ok(())
@@ -410,7 +698,7 @@ async fn wait_for_partial_copy(observer: &Client) -> Result<()> {
                 .await?
                 .try_get(0)?;
             if partial {
-                return Ok::<_, tokio_postgres::Error>(());
+                return Ok::<_, pgex::connection::Error>(());
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }

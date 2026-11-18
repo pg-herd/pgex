@@ -99,6 +99,7 @@ pub(super) fn source_session(
 
 pub(super) fn snapshot(cli: SnapshotInput, file: SnapshotInput) -> SnapshotSettings {
     SnapshotSettings {
+        mode: cli.mode.or(file.mode).unwrap_or_default(),
         reader_connection_limit: cli
             .reader_connection_limit
             .or(file.reader_connection_limit)
@@ -155,6 +156,8 @@ pub(super) fn postgres_transfer(
             .validate_layouts
             .or(file.validate_layouts)
             .unwrap_or(true),
+        no_locks: cli.no_locks.or(file.no_locks).unwrap_or_default(),
         skip_delete: cli.skip_delete.or(file.skip_delete).unwrap_or_default(),
+        truncate: cli.truncate.or(file.truncate).unwrap_or_default(),
     }
 }

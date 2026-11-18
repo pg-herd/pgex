@@ -1,7 +1,7 @@
 use std::num::NonZeroUsize;
 
 use anyhow::{Context, Result, ensure};
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, watch};
 
 use crate::{
     connection::{Connector, Session},
@@ -12,7 +12,7 @@ use super::{
     error::SnapshotScopeError,
     export::export_snapshot,
     session::SnapshotReaders,
-    transaction::{SnapshotTimeouts, begin_read_transaction},
+    transaction::{SnapshotTimeouts, SourceReadMode, begin_read_transaction},
 };
 
 pub const DEFAULT_CLIENT_CONNECTION_CHECK_INTERVAL_MS: u32 = 1_000;
@@ -50,10 +50,21 @@ impl SnapshotLease {
     }
 
     /// Holds an exporting transaction and its session for the duration of the callback.
-    /// Drops the callback if the exporter disconnects.
+    /// Stops the callback if the exporter disconnects.
     pub async fn with_snapshot<T, E>(
         &self,
         options: SnapshotOptions<'_>,
+        work: impl for<'scope> AsyncFnOnce(SnapshotReaders<'scope>) -> Result<T, E>,
+    ) -> Result<T, SnapshotScopeError<E>> {
+        self.with_readers(options, SourceReadMode::SharedSnapshot, work)
+            .await
+    }
+
+    /// Holds source table locks while the callback opens readers in the selected mode.
+    pub async fn with_readers<T, E>(
+        &self,
+        options: SnapshotOptions<'_>,
+        mode: SourceReadMode,
         work: impl for<'scope> AsyncFnOnce(SnapshotReaders<'scope>) -> Result<T, E>,
     ) -> Result<T, SnapshotScopeError<E>> {
         validate_reader_connection_limit(options.reader_connection_limit)
@@ -64,25 +75,24 @@ impl SnapshotLease {
             .await
             .map_err(SnapshotScopeError::Setup)?;
         let result = self
-            .with_exported_snapshot(&mut exporter, options, work)
+            .with_locked_readers(&mut exporter, options, mode, work)
             .await;
-        // The disconnect branch has already joined the driver.
-        if !matches!(result, Err(SnapshotScopeError::ExporterLost(_))) {
-            exporter.close().await;
-        }
+        exporter.close().await;
         result
     }
 
-    async fn with_exported_snapshot<T, E>(
+    async fn with_locked_readers<T, E>(
         &self,
         exporter: &mut Session,
         options: SnapshotOptions<'_>,
+        mode: SourceReadMode,
         work: impl for<'scope> AsyncFnOnce(SnapshotReaders<'scope>) -> Result<T, E>,
     ) -> Result<T, SnapshotScopeError<E>> {
         begin_read_transaction(
             exporter,
             options.client_connection_check_interval_ms,
             options.exporter_timeouts,
+            mode,
         )
         .await
         .map_err(SnapshotScopeError::Setup)?;
@@ -90,14 +100,29 @@ impl SnapshotLease {
             lock_for_read(exporter, options.tables)
                 .await
                 .map_err(SnapshotScopeError::Setup)?;
-            let key = export_snapshot(exporter)
-                .await
-                .map_err(SnapshotScopeError::Setup)?;
-            let readers = SnapshotReaders::new(&self.source, &key, &options);
+            let key = match mode {
+                SourceReadMode::SharedSnapshot => Some(
+                    export_snapshot(exporter)
+                        .await
+                        .map_err(SnapshotScopeError::Setup)?,
+                ),
+                SourceReadMode::ReadCommitted => None,
+            };
+            let (exporter_disconnected, _) = watch::channel(());
+            let readers =
+                SnapshotReaders::new(self.source.clone(), key, &options, &exporter_disconnected);
+            let work = work(readers);
+            tokio::pin!(work);
             tokio::select! {
                 biased;
-                error = exporter.wait_for_disconnect() => Err(SnapshotScopeError::ExporterLost(error)),
-                result = work(readers) => result.map_err(SnapshotScopeError::Work),
+                error = exporter.client().wait_for_disconnect() => {
+                    // Let the worker supervisor join its tasks while it still holds the target locks.
+                    if exporter_disconnected.send(()).is_ok() {
+                        let _ = work.await;
+                    }
+                    Err(SnapshotScopeError::ExporterLost(error))
+                }
+                result = &mut work => result.map_err(SnapshotScopeError::Work),
             }
         }
         .await;
@@ -110,7 +135,7 @@ impl SnapshotLease {
             .client()
             .batch_execute("ROLLBACK")
             .await
-            .context("Roll back snapshot export")
+            .context("Roll back source table lock transaction")
         else {
             return result;
         };

@@ -5,6 +5,8 @@ use std::{
 
 use crate::{predicate::Predicate, snapshot::SnapshotTimeouts, table::QualifiedTable};
 
+use super::snapshot_mode::SnapshotMode;
+
 pub struct CompiledConfig {
     pub source: SourceConfig,
     pub target: PostgresTargetConfig,
@@ -30,6 +32,7 @@ pub struct SourceSessionSettings {
 }
 
 pub struct SnapshotSettings {
+    pub mode: SnapshotMode,
     pub reader_connection_limit: NonZeroUsize,
     pub client_connection_check_interval_ms: u32,
     pub exporter_timeouts: SnapshotTimeouts,
@@ -78,5 +81,7 @@ pub struct PostgresTransferSettings {
     pub workers: NonZeroUsize,
     pub commit_group_mib: NonZeroU32,
     pub validate_layouts: bool,
+    pub no_locks: bool,
     pub skip_delete: bool,
+    pub truncate: bool,
 }

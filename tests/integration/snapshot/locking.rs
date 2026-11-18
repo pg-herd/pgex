@@ -1,5 +1,6 @@
+use crate::postgres::sql_state;
 use anyhow::{Result, ensure};
-use tokio_postgres::{Client, error::SqlState};
+use pgex::connection::Client;
 
 use pgex::snapshot::SnapshotOptions;
 
@@ -17,7 +18,7 @@ async fn selected_table_stays_locked_until_the_snapshot_scope_ends() -> Result<(
                 async |_| {
                     let lock = try_exclusive_lock(observer).await;
                     ensure!(
-                        matches!(lock, Err(ref error) if error.code() == Some(&SqlState::LOCK_NOT_AVAILABLE)),
+                        matches!(lock, Err(ref error) if sql_state(error).as_deref() == Some("55P03")),
                         "expected the exporter to prevent an exclusive lock before opening a reader, got {lock:?}"
                     );
                     Ok::<_, anyhow::Error>(())
@@ -31,7 +32,7 @@ async fn selected_table_stays_locked_until_the_snapshot_scope_ends() -> Result<(
     .await
 }
 
-async fn try_exclusive_lock(observer: &Client) -> Result<(), tokio_postgres::Error> {
+async fn try_exclusive_lock(observer: &Client) -> Result<(), pgex::connection::Error> {
     observer.batch_execute("BEGIN").await?;
     let lock = observer
         .batch_execute("LOCK TABLE public.snapshot_lock_probe IN ACCESS EXCLUSIVE MODE NOWAIT")

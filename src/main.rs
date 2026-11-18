@@ -11,9 +11,11 @@ use cli::{Cli, resolve_password};
 use job_runner::JobRunner;
 use pgex::{
     catalog::CatalogReader,
-    config::{compiled::TableSelection, compiler::compile_config, loader},
+    config::{
+        compiled::TableSelection, compiler::compile_config, loader, snapshot_mode::SnapshotMode,
+    },
     connection::Connector,
-    snapshot::{SnapshotLease, SnapshotOptions},
+    snapshot::{SnapshotLease, SnapshotOptions, SourceReadMode},
     targets::{PostgresTarget, PostgresTargetOptions},
 };
 
@@ -61,14 +63,20 @@ async fn main() -> Result<()> {
         target,
         PostgresTargetOptions {
             validate_layouts: config.target.transfer.validate_layouts,
+            no_locks: config.target.transfer.no_locks,
             workers: config.target.transfer.workers,
             commit_group_mib: config.target.transfer.commit_group_mib,
             replica_role: config.target.session.replica_role,
             row_security_off: config.target.session.row_security_off,
             skip_delete: config.target.transfer.skip_delete,
+            truncate: config.target.transfer.truncate,
             delete_filters: config.target.delete_filters,
         },
     );
+    let read_mode = match config.source.snapshot.mode {
+        SnapshotMode::Shared => SourceReadMode::SharedSnapshot,
+        SnapshotMode::PerStatement => SourceReadMode::ReadCommitted,
+    };
     let runner = JobRunner::new(catalog, SnapshotLease::new(connector), target);
     runner
         .run(
@@ -83,6 +91,7 @@ async fn main() -> Result<()> {
                 exporter_timeouts: config.source.snapshot.exporter_timeouts,
                 reader_timeouts: config.source.snapshot.reader_timeouts,
             },
+            read_mode,
             &config.source.selection.filters,
         )
         .await?;

@@ -16,8 +16,8 @@ async fn worker_imports_once_and_reuses_one_destination_session_across_transacti
              CREATE TABLE public.b_second (LIKE public.a_first) WITH (autovacuum_enabled = false);
              CREATE TABLE public.c_oversized (LIKE public.a_first) WITH (autovacuum_enabled = false);
              CREATE TABLE public.d_last (LIKE public.a_first) WITH (autovacuum_enabled = false);
-             INSERT INTO public.a_first VALUES (1, 1, repeat('x', 524241));
-             INSERT INTO public.b_second VALUES (1, 1, repeat('x', 524241));
+             INSERT INTO public.a_first VALUES (1, 1, repeat('x', 524283));
+             INSERT INTO public.b_second VALUES (1, 1, repeat('x', 524283));
              INSERT INTO public.c_oversized VALUES (1, 1, repeat('x', 1100000));
              INSERT INTO public.d_last VALUES (1, 1, 'last');",
         )
@@ -43,6 +43,8 @@ async fn worker_imports_once_and_reuses_one_destination_session_across_transacti
         .env("PGEX_SOURCE_PASSWORD", &database.password)
         .env("PGEX_TARGET_PASSWORD", &database.password)
         .args([
+            "--source-snapshot",
+            "shared",
             "--source-reader-limit",
             "1",
             "--target-parallel-transfers",
@@ -70,8 +72,8 @@ async fn worker_imports_once_and_reuses_one_destination_session_across_transacti
 
     let begins = statement_backends(&log, |sql| sql == "BEGIN");
     let commits = statement_backends(&log, |sql| sql == "COMMIT");
-    // Each of the first two tables sends 512 KiB (text plus 47 bytes of COPY
-    // framing and row data). Together they hit 1 MiB exactly. The oversized
+    // Each of the first two tables sends 512 KiB: "1\t1\t", 524283 payload bytes,
+    // and a newline. Together they hit 1 MiB exactly. The oversized
     // third table and the remaining fourth table each get their own transaction.
     assert_eq!(begins.len(), 4, "{log}");
     let lock_session = begins[0];
@@ -143,6 +145,54 @@ async fn row_security_overrides_are_opt_in_and_independent() -> Result<()> {
         assert_eq!(target_sets.len(), target, "{flags:?}: {statements}");
         previous_log_len = log.len();
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn no_target_locks_skips_the_destination_guard_only() -> Result<()> {
+    let database = PostgresTestDatabase::start().await?;
+    let setup = database.connector().await?.connect().await?;
+    setup
+        .client()
+        .batch_execute(
+            "CREATE TABLE public.events (id integer); INSERT INTO public.events VALUES (1)",
+        )
+        .await?;
+    setup.close().await;
+
+    let connection_string = format!(
+        "{}?options=-c%20log_statement%3Dall",
+        database.connection_string
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_pgex"))
+        .args([
+            "--source",
+            &connection_string,
+            "--target",
+            &connection_string,
+            "--tables",
+            "public.events",
+            "--no-target-locks",
+        ])
+        .arg("--ca")
+        .arg(database.ca.path())
+        .arg("--target-ca")
+        .arg(database.ca.path())
+        .env("PGEX_SOURCE_PASSWORD", &database.password)
+        .env("PGEX_TARGET_PASSWORD", &database.password)
+        .output()
+        .await?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let log = database.stderr().await?;
+    let locks = statement_backends(&log, |sql| {
+        sql == r#"LOCK TABLE "public"."events" IN ACCESS SHARE MODE"#
+    });
+    assert_eq!(locks.len(), 1, "{log}");
     Ok(())
 }
 

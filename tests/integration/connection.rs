@@ -1,9 +1,29 @@
+use pgex::connection::Row;
 use std::future::pending;
 
 use anyhow::{Result, bail};
 use tokio::sync::oneshot;
 
 use super::postgres::PostgresTestDatabase;
+
+#[tokio::test]
+async fn drains_large_tls_results_without_losing_readiness() -> Result<()> {
+    let database = PostgresTestDatabase::start().await?;
+    let session = database.connector().await?.connect().await?;
+    let rows = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        session.client().query(
+            "SELECT n, repeat('x', 512) AS payload FROM generate_series(1, 20000) AS n",
+            &[],
+        ),
+    )
+    .await??;
+    assert_eq!(rows.len(), 20000);
+    assert_eq!(rows.last().unwrap().get::<i32, _>(0), 20000);
+    assert_eq!(rows[0].get::<String, _>(1).len(), 512);
+    session.close().await;
+    Ok(())
+}
 
 #[tokio::test]
 async fn reuses_one_connection_after_commit_and_rollback() -> Result<()> {
@@ -42,8 +62,8 @@ async fn reuses_one_connection_after_commit_and_rollback() -> Result<()> {
                             &[],
                         )
                         .await?;
-                    assert_eq!(row.try_get::<_, i32>(0)?, original_pid);
-                    assert_eq!(row.try_get::<_, Vec<i32>>(1)?, [1]);
+                    assert_eq!(row.try_get::<i32, _>(0)?, original_pid);
+                    assert_eq!(row.try_get::<Vec<i32>, _>(1)?, [1]);
                     session
                         .client().batch_execute("INSERT INTO transaction_probe VALUES (3)")
                         .await?;
@@ -55,7 +75,7 @@ async fn reuses_one_connection_after_commit_and_rollback() -> Result<()> {
                 .client()
                 .query_one("SELECT array_agg(id ORDER BY id) FROM transaction_probe", &[])
                 .await?;
-            assert_eq!(row.try_get::<_, Vec<i32>>(0)?, [1, 3]);
+            assert_eq!(row.try_get::<Vec<i32>, _>(0)?, [1, 3]);
             Ok(())
         })
         .await
@@ -85,4 +105,56 @@ async fn cancelling_transaction_work_closes_the_session() -> Result<()> {
             Ok(())
         })
         .await
+}
+
+#[tokio::test]
+async fn tries_the_next_host_and_honors_target_session_attributes() -> Result<()> {
+    let database = PostgresTestDatabase::start().await?;
+    let url = url::Url::parse(&database.connection_string)?;
+    let host = url.host_str().unwrap();
+    let port = url.port().unwrap();
+    let connection_string = format!(
+        "postgresql://pgex_test@127.0.0.1:1,{host}:{port}/pgex_snapshot_test?connect_timeout=1&target_session_attrs=read-write"
+    );
+    let connector = pgex::connection::Connector::new(
+        &connection_string,
+        Some(database.ca.path()),
+        Some(&database.password),
+    )
+    .await?;
+    let session = connector.connect().await?;
+    let value: i32 = session
+        .client()
+        .query_one("SELECT 42", &[])
+        .await?
+        .try_get(0)?;
+    assert_eq!(value, 42);
+    session.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn requires_a_trusted_certificate_even_when_url_disables_tls() -> Result<()> {
+    let database = PostgresTestDatabase::start().await?;
+    let connection_string = format!("{}?sslmode=disable", database.connection_string);
+    let untrusted =
+        pgex::connection::Connector::new(&connection_string, None, Some(&database.password))
+            .await?;
+    let error = untrusted
+        .connect()
+        .await
+        .err()
+        .expect("An untrusted certificate must fail");
+    assert!(
+        format!("{error:#}").to_lowercase().contains("certificate"),
+        "{error:#}"
+    );
+    let trusted = pgex::connection::Connector::new(
+        &connection_string,
+        Some(database.ca.path()),
+        Some(&database.password),
+    )
+    .await?;
+    trusted.connect().await?.close().await;
+    Ok(())
 }

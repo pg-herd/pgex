@@ -9,5 +9,6 @@ pub use lease::{
     DEFAULT_CLIENT_CONNECTION_CHECK_INTERVAL_MS, DEFAULT_READER_CONNECTION_LIMIT, SnapshotLease,
     SnapshotOptions,
 };
+pub(crate) use session::SnapshotReadSessions;
 pub use session::SnapshotReaders;
-pub use transaction::SnapshotTimeouts;
+pub use transaction::{SnapshotTimeouts, SourceReadMode};

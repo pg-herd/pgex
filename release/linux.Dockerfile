@@ -1,7 +1,7 @@
 FROM rust:1.99.1-bookworm AS build
 ARG TARGETARCH
 WORKDIR /build
-RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev \
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY src/ src/
@@ -16,7 +16,7 @@ RUN set -eu; \
     cp "target/$target/release/pgex" /out/
 
 FROM debian:bookworm-slim AS verify
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libgcc-s1 libssl3 \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libgcc-s1 libpq5 \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /out
 COPY --from=build /out/pgex .
@@ -24,8 +24,7 @@ RUN set -eu; \
     ldd ./pgex > runtime-dependencies.txt; \
     cat runtime-dependencies.txt; \
     if grep -F 'not found' runtime-dependencies.txt; then exit 1; fi; \
-    grep -E '^[[:space:]]*libssl[.]so[.]3 => /' runtime-dependencies.txt; \
-    grep -E '^[[:space:]]*libcrypto[.]so[.]3 => /' runtime-dependencies.txt; \
+    grep -F 'libpq.so.5' runtime-dependencies.txt; \
     LD_BIND_NOW=1 ./pgex --help >/dev/null
 
 FROM scratch

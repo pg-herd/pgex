@@ -1,3 +1,4 @@
+use crate::connection::Row;
 use anyhow::{Context, Result};
 
 use crate::{

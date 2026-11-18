@@ -14,11 +14,11 @@ pub enum SnapshotScopeError<E> {
 impl<E: fmt::Display> fmt::Display for SnapshotScopeError<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Setup(error) => write!(f, "Snapshot setup: {error:#}"),
+            Self::Setup(error) => write!(f, "Source reader setup: {error:#}"),
             Self::ExporterLost(error) => {
-                write!(f, "Source snapshot exporter disconnected: {error:#}")
+                write!(f, "Source table lock session disconnected: {error:#}")
             }
-            Self::Work(error) => write!(f, "Snapshot work: {error:#}"),
+            Self::Work(error) => write!(f, "Source reader callback: {error:#}"),
             Self::Rollback {
                 error,
                 prior_failure,
@@ -26,7 +26,7 @@ impl<E: fmt::Display> fmt::Display for SnapshotScopeError<E> {
                 if let Some(failure) = prior_failure {
                     write!(f, "{failure}. ")?;
                 }
-                write!(f, "Snapshot rollback failed: {error:#}")
+                write!(f, "Source rollback failed: {error:#}")
             }
         }
     }

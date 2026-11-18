@@ -7,6 +7,8 @@ use std::{
 
 use serde::{Deserialize, Deserializer, de::Visitor};
 
+use crate::config::snapshot_mode::SnapshotMode;
+
 #[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(super) struct Document {
@@ -42,6 +44,7 @@ pub(super) struct SourceSession {
 #[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(super) struct Snapshot {
+    pub mode: Option<SnapshotMode>,
     pub reader_connection_limit: Option<NonZeroUsize>,
     pub client_connection_check_interval_ms: Option<u32>,
     pub exporter_timeouts: Timeouts,
@@ -102,7 +105,9 @@ pub(super) struct Transfer {
     pub workers: Option<NonZeroUsize>,
     pub commit_group_mib: Option<NonZeroU32>,
     pub validate_layouts: Option<bool>,
+    pub no_locks: Option<bool>,
     pub skip_delete: Option<bool>,
+    pub truncate: Option<bool>,
 }
 
 /// Require a YAML string for predicates and raw parameter values.

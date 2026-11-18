@@ -8,6 +8,8 @@ use crate::{
     table::QualifiedTable,
 };
 
+use super::snapshot_mode::SnapshotMode;
+
 #[derive(Default)]
 pub struct CliInput {
     pub settings: ConfigInput,
@@ -49,6 +51,7 @@ pub struct SourceSessionInput {
 
 #[derive(Default)]
 pub struct SnapshotInput {
+    pub mode: Option<SnapshotMode>,
     pub reader_connection_limit: Option<NonZeroUsize>,
     pub client_connection_check_interval_ms: Option<u32>,
     pub exporter_timeouts: TimeoutInput,
@@ -109,5 +112,7 @@ pub struct PostgresTransferInput {
     pub workers: Option<NonZeroUsize>,
     pub commit_group_mib: Option<NonZeroU32>,
     pub validate_layouts: Option<bool>,
+    pub no_locks: Option<bool>,
     pub skip_delete: Option<bool>,
+    pub truncate: Option<bool>,
 }

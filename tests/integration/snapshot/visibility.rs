@@ -1,4 +1,5 @@
 use anyhow::{Result, ensure};
+use pgex::connection::Row;
 
 use pgex::snapshot::SnapshotOptions;
 
@@ -34,7 +35,7 @@ async fn imported_snapshot_excludes_rows_committed_after_export() -> Result<()> 
                                     &[],
                                 )
                                 .await?;
-                            Ok::<_, tokio_postgres::Error>(row.get(0))
+                            Ok::<_, pgex::connection::Error>(row.get(0))
                         })
                         .await?;
                     let current_count: i64 = observer

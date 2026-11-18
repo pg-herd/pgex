@@ -5,7 +5,7 @@ mod session_cleanup;
 mod visibility;
 
 use anyhow::Result;
-use tokio_postgres::Client;
+use pgex::connection::Client;
 
 use pgex::snapshot::SnapshotLease;
 

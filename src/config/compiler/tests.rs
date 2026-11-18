@@ -8,6 +8,7 @@ use crate::{
             CliInput, ColumnRuleInput, ConfigInput, FileConfig, PredicateInput, PredicateOrigin,
             TableFilterInput,
         },
+        snapshot_mode::SnapshotMode,
     },
     predicate::{
         parameters::{
@@ -31,6 +32,7 @@ fn applies_explicit_values_including_false_and_zero_then_fills_defaults() {
     file.target.session.row_security_off = Some(true);
     file.target.session.replica_role = Some(true);
     file.target.transfer.skip_delete = Some(true);
+    file.target.transfer.no_locks = Some(true);
 
     let mut cli = ConfigInput::default();
     cli.source.connection.url = Some("postgresql://url_user@cli/app".into());
@@ -39,6 +41,7 @@ fn applies_explicit_values_including_false_and_zero_then_fills_defaults() {
     cli.source.snapshot.reader_timeouts.transaction_ms = Some(0);
     cli.target.session.replica_role = Some(false);
     cli.target.transfer.skip_delete = Some(false);
+    cli.target.transfer.no_locks = Some(false);
     cli.target.transfer.workers = NonZeroUsize::new(4);
 
     let compiled = compile_config(
@@ -64,6 +67,7 @@ fn applies_explicit_values_including_false_and_zero_then_fills_defaults() {
     );
     assert_eq!(compiled.target.connection.url, "postgresql://target/app");
     assert!(!compiled.source.session.row_security_off);
+    assert_eq!(compiled.source.snapshot.mode, SnapshotMode::Shared);
     assert_eq!(compiled.source.snapshot.reader_connection_limit.get(), 2);
     assert_eq!(
         compiled.source.snapshot.client_connection_check_interval_ms,
@@ -81,6 +85,7 @@ fn applies_explicit_values_including_false_and_zero_then_fills_defaults() {
     assert!(compiled.target.session.row_security_off);
     assert!(!compiled.target.session.replica_role);
     assert!(!compiled.target.transfer.skip_delete);
+    assert!(!compiled.target.transfer.no_locks);
     assert_eq!(compiled.target.transfer.workers.get(), 4);
     assert!(compiled.target.transfer.validate_layouts);
     assert_eq!(compiled.target.transfer.commit_group_mib.get(), 32);
@@ -88,6 +93,25 @@ fn applies_explicit_values_including_false_and_zero_then_fills_defaults() {
         compiled.source.selection.tables,
         TableSelection::Discover
     ));
+}
+
+#[test]
+fn explicit_cli_snapshot_setting_takes_precedence_over_yaml() {
+    use SnapshotMode::{PerStatement, Shared};
+
+    for (cli_mode, file_mode, expected) in [
+        (None, Some(PerStatement), PerStatement),
+        (Some(Shared), Some(PerStatement), Shared),
+        (Some(PerStatement), Some(Shared), PerStatement),
+    ] {
+        let mut cli = CliInput::default();
+        cli.settings.source.snapshot.mode = cli_mode;
+        let mut file = settings();
+        file.source.snapshot.mode = file_mode;
+
+        let compiled = compile_config(cli, Some(FileConfig { settings: file })).unwrap();
+        assert_eq!(compiled.source.snapshot.mode, expected);
+    }
 }
 
 #[test]

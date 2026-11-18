@@ -15,7 +15,7 @@ pub enum ParameterOrigin {
     Yaml { file: PathBuf },
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ParameterValue {
     Text(String),
     Integer(i32),
