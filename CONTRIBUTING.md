@@ -104,3 +104,14 @@ then push a matching `v<version>` tag. For example, package version `0.1.0`
 requires tag `v0.1.0`. The workflow publishes archives and checksums after all
 builds pass. When updating the Rust pin, also update the Rust image version in
 the Linux Dockerfile.
+
+### Update Homebrew
+
+After publishing a release, update `Formula/pgex.rb` with its version, macOS
+archive URL, and SHA-256 from the release. Commit the formula to `main`; the tap
+reads it from this repository.
+
+Run the **Homebrew bottle** workflow to package the release for Homebrew. It
+installs and tests the existing binary on a GitHub runner, then uploads the bottle
+and its metadata to the release. Update the formula's `bottle` block with that
+metadata. Verify installation with `brew reinstall pgex` and `brew test pgex`.

@@ -21,6 +21,21 @@ selected slice of data into another PostgreSQL database.
 
 ## Install
 
+### Homebrew
+
+On Apple Silicon Macs running macOS 15 or newer:
+
+```sh
+brew tap pg-herd/pgex https://github.com/pg-herd/pgex
+brew trust --formula pg-herd/pgex/pgex
+brew install pgex
+```
+
+The tap and formula trust are a one-time setup. Homebrew installs the required
+PostgreSQL client library automatically. To update pgex later, run `brew update && brew upgrade pgex`.
+
+### Download a release
+
 Download the archive matching your platform from [GitHub Releases](https://github.com/pg-herd/pgex/releases),
 extract it, and put the `pgex` executable on your PATH.
 

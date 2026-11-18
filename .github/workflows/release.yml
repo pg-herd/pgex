@@ -29,7 +29,7 @@ jobs:
       RUST_TARGET: ${{ matrix.target }}
 
     steps:
-      - uses: actions/checkout@3d3c42e5aac5c4394ada46510f46605deb7cec477e # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -103,5 +103,9 @@ jobs:
         run: |
           cd artifacts
           sha256sum --check -- *.sha256
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release already published; keeping its existing assets."
+            exit 0
+          fi
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
             --verify-tag --generate-notes -- *.tar.gz *.sha256

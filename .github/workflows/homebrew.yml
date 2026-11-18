@@ -1,0 +1,51 @@
+name: Homebrew bottle
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bottle:
+    runs-on: macos-15
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      HOMEBREW_NO_INSTALL_CLEANUP: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install and test the release through Homebrew
+        run: |
+          brew tap pg-herd/pgex https://github.com/pg-herd/pgex
+          brew trust --formula pg-herd/pgex/pgex
+          brew install --build-bottle pg-herd/pgex/pgex
+          brew test pg-herd/pgex/pgex
+
+      - name: Package the Homebrew bottle
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
+          brew bottle --json --no-rebuild \
+            --root-url="https://github.com/pg-herd/pgex/releases/download/v$version" \
+            pg-herd/pgex/pgex
+          python3 - <<'PYTHON'
+          import json
+          from pathlib import Path
+          for metadata in Path('.').glob('*.bottle.json'):
+              bottle = next(iter(json.loads(metadata.read_text()).values()))['bottle']
+              for entry in bottle['tags'].values():
+                  source = Path(entry['local_filename'])
+                  destination = Path(entry['filename'])
+                  if source != destination:
+                      source.rename(destination)
+          PYTHON
+
+      - name: Publish the bottle on the existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
+          gh release upload "v$version" --repo "$GITHUB_REPOSITORY" --clobber \
+            -- *.bottle.tar.gz *.bottle.json
