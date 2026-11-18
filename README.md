@@ -34,6 +34,24 @@ brew install pgex
 The tap and formula trust are a one-time setup. Homebrew installs the required
 PostgreSQL client library automatically. To update pgex later, run `brew update && brew upgrade pgex`.
 
+### Debian and Ubuntu
+
+Packages are tested on Debian 12 and Ubuntu 24.04, for x86-64 and ARM64.
+Add the pgex repository once:
+
+```sh
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl
+sudo install -d -m0755 /etc/apt/keyrings
+sudo curl -fsSLo /etc/apt/keyrings/pgex.asc https://pg-herd.github.io/pgex/apt/pgex.asc
+sudo curl -fsSLo /etc/apt/sources.list.d/pgex.sources https://pg-herd.github.io/pgex/apt/pgex.sources
+sudo apt-get update
+sudo apt-get install pgex
+```
+
+APT installs the required client libraries automatically. Later updates are
+available through normal APT upgrades. To remove pgex, run `sudo apt-get remove pgex`.
+
 ### Download a release
 
 Download the archive matching your platform from [GitHub Releases](https://github.com/pg-herd/pgex/releases),

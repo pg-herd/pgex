@@ -1,0 +1,195 @@
+name: APT repository
+
+on:
+  push:
+    paths:
+      - '.github/workflows/apt.yml'
+      - 'release/apt/**'
+  workflow_run:
+    workflows: ['Release binaries']
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Published release tag (empty means latest stable release)'
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apt-repository
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Resolve the published release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_TAG: ${{ inputs.tag }}
+        run: |
+          tag=$(gh release view ${REQUESTED_TAG:+"$REQUESTED_TAG"} --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+  package:
+    needs: release
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            architecture: amd64
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            architecture: arm64
+            target: aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download and verify the released binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release.outputs.tag }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          archive="pgex-$TAG-$TARGET.tar.gz"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$archive*"
+          sha256sum --check "$archive.sha256"
+          mkdir input
+          tar -xzf "$archive" --strip-components=1 -C input
+      - name: Build Debian packages
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+          ARCHITECTURE: ${{ matrix.architecture }}
+        run: |
+          mkdir packages previous
+          docker build --tag pgex-apt-builder release/apt
+          docker run --rm --mount type=bind,src="$PWD",dst=/work pgex-apt-builder \
+            /work/release/apt/build-package.sh /work/input "$VERSION" "$ARCHITECTURE" /work/packages
+          docker run --rm --mount type=bind,src="$PWD",dst=/work pgex-apt-builder \
+            /work/release/apt/build-package.sh /work/input "$VERSION~test" "$ARCHITECTURE" /work/previous
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: deb-${{ matrix.architecture }}
+          path: |
+            packages/*.deb
+            previous/*.deb
+          if-no-files-found: error
+
+  test:
+    needs: [release, package]
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            architecture: amd64
+            image: debian:bookworm-slim
+          - runner: ubuntu-24.04
+            architecture: amd64
+            image: ubuntu:24.04
+          - runner: ubuntu-24.04-arm
+            architecture: arm64
+            image: debian:bookworm-slim
+          - runner: ubuntu-24.04-arm
+            architecture: arm64
+            image: ubuntu:24.04
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: deb-${{ matrix.architecture }}
+      - name: Test the signed repository in a clean container
+        env:
+          GNUPGHOME: ${{ runner.temp }}/test-gnupg
+          VERSION: ${{ needs.release.outputs.version }}
+          ARCHITECTURE: ${{ matrix.architecture }}
+          IMAGE: ${{ matrix.image }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y apt-utils dpkg-dev gnupg
+          mkdir -m700 "$GNUPGHOME"
+          gpg --batch --pinentry-mode loopback --passphrase '' \
+            --quick-generate-key 'pgex temporary repository test' rsa3072 sign 1d
+          key=$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1 == "fpr" {print $10; exit}')
+          release/apt/build-repository.sh packages repository "$key"
+          python3 -m http.server 8000 --directory repository > "$RUNNER_TEMP/http.log" 2>&1 &
+          server=$!
+          trap 'kill "$server"' EXIT
+          curl --retry 5 --retry-connrefused --retry-delay 1 --fail --silent http://127.0.0.1:8000/pgex.asc >/dev/null
+          docker run --rm --network host --mount type=bind,src="$PWD",dst=/work,readonly "$IMAGE" \
+            bash /work/release/apt/test-install.sh http://127.0.0.1:8000 /work/repository/pgex.asc \
+            "$VERSION" "/work/previous/pgex_$VERSION~test_$ARCHITECTURE.deb"
+
+  publish:
+    if: github.event_name != 'push'
+    needs: [release, test]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Publish new packages and collect existing releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' > existing-assets
+          for package in artifacts/packages/*.deb; do
+            if ! grep -Fxq "$(basename "$package")" existing-assets; then
+              gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" "$package"
+            fi
+          done
+          mkdir repository-packages
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases" \
+            --jq '.[] | select(.draft == false and .prerelease == false) | .assets[] | select(.name | endswith(".deb")) | .browser_download_url' \
+            > package-urls
+          while IFS= read -r url; do
+            curl --fail --location --silent --show-error "$url" --output "repository-packages/${url##*/}"
+          done < package-urls
+      - name: Sign the repository
+        env:
+          GNUPGHOME: ${{ runner.temp }}/apt-gnupg
+          APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
+          APT_SIGNING_PASSPHRASE: ${{ secrets.APT_SIGNING_PASSPHRASE }}
+        run: |
+          [[ -n "$APT_SIGNING_KEY" && -n "$APT_SIGNING_PASSPHRASE" ]] || { echo 'Configure APT_SIGNING_KEY and APT_SIGNING_PASSPHRASE repository secrets before publishing.' >&2; exit 1; }
+          sudo apt-get update
+          sudo apt-get install -y apt-utils dpkg-dev gnupg
+          mkdir -m700 "$GNUPGHOME"
+          printf '%s' "$APT_SIGNING_KEY" | gpg --batch --import
+          expected=$(gpg --batch --with-colons --show-keys release/apt/pgex.asc | awk -F: '$1 == "fpr" {print $10; exit}')
+          key=$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1 == "fpr" {print $10; exit}')
+          [[ "$key" == "$expected" ]] || { echo 'The signing secret does not match the published public key.' >&2; exit 1; }
+          release/apt/build-repository.sh repository-packages site/apt "$key"
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+      - name: Deploy the APT repository
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

@@ -115,3 +115,30 @@ Run the **Homebrew bottle** workflow to package the release for Homebrew. It
 installs and tests the existing binary on a GitHub runner, then uploads the bottle
 and its metadata to the release. Update the formula's `bottle` block with that
 metadata. Verify installation with `brew reinstall pgex` and `brew test pgex`.
+
+### Publish the APT repository
+
+The [APT workflow](.github/workflows/apt.yml) packages existing Linux release
+binaries; it does not rebuild pgex or change the parser. It tests installation,
+SQL diagnostics, upgrades, removal, and rejection of untrusted signatures on
+Debian 12 and Ubuntu 24.04, for both supported architectures.
+
+One-time setup:
+
+1. In the repository's **Settings → Pages**, select **GitHub Actions** as the source.
+2. Add the repository Actions secrets `APT_SIGNING_KEY` (the exported, encrypted
+   private key) and `APT_SIGNING_PASSPHRASE` (its passphrase).
+3. Keep a password-manager backup of both. GitHub's settings do not reveal secret
+   values after they are saved. The public key is tracked at
+   [release/apt/pgex.asc](release/apt/pgex.asc); the workflow checks that it matches
+   the private signing key.
+
+Run **APT repository** manually to publish an existing release; the optional
+`tag` input defaults to the latest stable release. Successful **Release binaries**
+runs trigger it automatically for future releases. Pushes to the APT tooling run
+package tests without publishing.
+
+Packages are added to their GitHub release without replacing existing assets.
+The workflow collects the published packages, creates and signs the APT indexes,
+and deploys them to GitHub Pages. Private keys stay in the runner's temporary
+directory. Production keys are never generated automatically by CI.
