@@ -50,7 +50,7 @@ async fn transfer_group(
             copy_table(source, destination, &table, CopyTransaction::Explicit).await
         }
         .await
-        .with_context(|| format!("Transfer table {}", table.name.sql()))?;
+        .with_context(|| format!("Transfer table {}", table.name))?;
         accumulated_bytes = accumulated_bytes.saturating_add(write.payload_bytes);
         if accumulated_bytes >= limit_bytes {
             return Ok(GroupEnd::LimitReached);

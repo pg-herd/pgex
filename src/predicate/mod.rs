@@ -1,6 +1,7 @@
 mod compiled;
 mod error;
 pub mod error_format;
+mod libpg_query;
 pub mod parameters;
 pub mod parser;
 mod placeholders;

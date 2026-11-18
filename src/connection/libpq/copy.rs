@@ -1,6 +1,5 @@
 use super::{Error, PgConnection};
 use bytes::Bytes;
-use futures_util::{Stream, stream};
 use std::{
     ffi::{CStr, CString},
     ptr::{self, NonNull},
@@ -24,50 +23,12 @@ impl PgConnection {
         self.start_copy(sql, 4).await?;
         Ok(CopyIn { connection: self })
     }
-    pub async fn copy_out_raw(
-        &mut self,
-        sql: &str,
-    ) -> Result<impl Stream<Item = Result<Bytes, Error>> + Send + '_, Error> {
+    pub async fn copy_out_raw(&mut self, sql: &str) -> Result<CopyOut<'_>, Error> {
         self.start_copy(sql, 3).await?;
-        Ok(stream::try_unfold(self, |connection| async move {
-            let mut retried = false;
-            loop {
-                let (count, bytes) = {
-                    let mut buffer = ptr::null_mut();
-                    let count =
-                        unsafe { pq_sys::PQgetCopyData(connection.raw.as_ptr(), &mut buffer, 1) };
-                    let bytes = if count > 0 {
-                        let bytes = Bytes::from_owner(CopyBuffer {
-                            pointer: NonNull::new(buffer.cast()).unwrap(),
-                            length: count as usize,
-                        });
-                        Some(bytes)
-                    } else {
-                        None
-                    };
-                    (count, bytes)
-                };
-                match count {
-                    n if n > 0 => return Ok(Some((bytes.unwrap(), connection))),
-                    0 => {
-                        if !retried {
-                            if unsafe { pq_sys::PQconsumeInput(connection.raw.as_ptr()) } == 0 {
-                                return Err(connection.error());
-                            }
-                            retried = true;
-                        } else {
-                            connection.input().await?;
-                            retried = false;
-                        }
-                    }
-                    -1 => {
-                        connection.complete().await?;
-                        return Ok(None);
-                    }
-                    _ => return Err(connection.error()),
-                }
-            }
-        }))
+        Ok(CopyOut {
+            connection: self,
+            finished: false,
+        })
     }
     async fn complete(&mut self) -> Result<u64, Error> {
         let mut count = 0;
@@ -84,6 +45,64 @@ impl PgConnection {
         }
         self.pending = false;
         failure.map_or(Ok(count), Err)
+    }
+}
+
+pub struct CopyOut<'a> {
+    connection: &'a mut PgConnection,
+    finished: bool,
+}
+
+impl CopyOut<'_> {
+    pub async fn next_chunk(&mut self) -> Result<Option<Bytes>, Error> {
+        if self.finished {
+            return Ok(None);
+        }
+        let mut retried = false;
+        loop {
+            let (count, bytes) = {
+                let mut buffer = ptr::null_mut();
+                let count =
+                    unsafe { pq_sys::PQgetCopyData(self.connection.raw.as_ptr(), &mut buffer, 1) };
+                let bytes = if count > 0 {
+                    Some(Bytes::from_owner(CopyBuffer {
+                        pointer: NonNull::new(buffer.cast()).unwrap(),
+                        length: count as usize,
+                    }))
+                } else {
+                    None
+                };
+                (count, bytes)
+            };
+            match count {
+                n if n > 0 => return Ok(bytes),
+                0 => {
+                    if !retried {
+                        if unsafe { pq_sys::PQconsumeInput(self.connection.raw.as_ptr()) } == 0 {
+                            self.finished = true;
+                            return Err(self.connection.error());
+                        }
+                        retried = true;
+                    } else {
+                        if let Err(error) = self.connection.input().await {
+                            self.finished = true;
+                            return Err(error);
+                        }
+                        retried = false;
+                    }
+                }
+                -1 => {
+                    let result = self.connection.complete().await;
+                    self.finished = true;
+                    result?;
+                    return Ok(None);
+                }
+                _ => {
+                    self.finished = true;
+                    return Err(self.connection.error());
+                }
+            }
+        }
     }
 }
 

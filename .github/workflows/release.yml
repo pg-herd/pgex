@@ -53,6 +53,7 @@ jobs:
           rustup toolchain install "$toolchain" --profile minimal --target "$RUST_TARGET"
           brew install libpq
           export PQ_LIB_DIR="$(brew --prefix libpq)/lib"
+          export LIBCLANG_PATH="$(dirname "$(xcrun --find clang)")/../lib"
           cargo build --release --locked --target "$RUST_TARGET"
           mkdir -p release-output
           cp "target/$RUST_TARGET/release/pgex" release-output/

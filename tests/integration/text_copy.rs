@@ -1,5 +1,4 @@
 use anyhow::Result;
-use futures_util::TryStreamExt;
 use pgex::connection::Client;
 use tokio::process::Command;
 
@@ -110,16 +109,15 @@ async fn preserves_values_with_text_copy_across_different_session_settings() -> 
 
 async fn stored_values(client: &Client) -> Result<Vec<u8>> {
     let mut connection = client.connection().await?;
-    let stream = connection
+    let mut copy = connection
         .get()
         .await?
         .copy_out_raw(
             "COPY (SELECT * FROM public.copy_values ORDER BY id) TO STDOUT (FORMAT BINARY)",
         )
         .await?;
-    tokio::pin!(stream);
     let mut values = Vec::new();
-    while let Some(chunk) = stream.try_next().await? {
+    while let Some(chunk) = copy.next_chunk().await? {
         values.extend_from_slice(&chunk);
     }
     Ok(values)

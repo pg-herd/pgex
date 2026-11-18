@@ -3,10 +3,11 @@ mod conninfo;
 mod copy;
 mod error;
 mod parameters;
+mod quoting;
 mod row;
 
 pub use connection::PgConnection;
-pub use copy::CopyIn;
+pub use copy::{CopyIn, CopyOut};
 pub use error::Error;
 pub use parameters::QueryParameter;
 pub use row::{Row, RowData};

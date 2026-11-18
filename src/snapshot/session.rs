@@ -1,7 +1,6 @@
 use std::{num::NonZeroUsize, sync::Arc};
 
 use anyhow::{Context, Result};
-use postgres_protocol::escape::escape_literal;
 use tokio::sync::{Semaphore, watch};
 
 use crate::connection::{Connector, Session};
@@ -118,7 +117,12 @@ impl SnapshotReadSessions {
         let result = async {
             if let Some(key) = &self.key {
                 // PostgreSQL requires a string literal for SET TRANSACTION SNAPSHOT.
-                let key_literal = escape_literal(key);
+                let key_literal = reader
+                    .client()
+                    .quote_literal(key)
+                    .await
+                    .context("Quote source snapshot key")
+                    .map_err(SnapshotScopeError::Setup)?;
                 reader
                     .client()
                     .batch_execute(&format!("SET TRANSACTION SNAPSHOT {key_literal}"))

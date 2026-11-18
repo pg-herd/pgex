@@ -14,7 +14,10 @@ pub(super) async fn truncate_and_copy_tables(
     replica_role: bool,
 ) -> Result<()> {
     while let Some(table) = queue.pop_front().await {
-        let relation = table.name.sql();
+        let relation = destination
+            .client()
+            .quote_qualified_identifier(table.name.schema(), table.name.table())
+            .await?;
         // Send TRUNCATE as a simple query and wait for its implicit commit.
         destination
             .client()

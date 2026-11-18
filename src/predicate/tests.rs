@@ -228,3 +228,68 @@ fn preserves_error_ranges_when_bind_markers_need_whitespace() {
     let closing = input.find(')').unwrap();
     assert_eq!(error.source_span, Some(closing..closing + 1));
 }
+
+#[test]
+fn preserves_case_sensitive_names_and_types_from_original_text() {
+    let parsed = parse_predicate("x = {{MyKey:bigint}} OR y = {{select:text}}").unwrap();
+    assert_eq!(parsed.sql, "x = $1 OR y = $2");
+    assert_eq!(parsed.placeholders[0].name, "MyKey");
+    assert_eq!(parsed.placeholders[1].name, "select");
+    let input = "x = {{MyKey:BIGINT}}";
+    let error = parse_predicate(input).unwrap_err();
+    assert_eq!(&input[error.source_span.unwrap()], "{{MyKey:BIGINT}}");
+    assert!(error.message.starts_with("Invalid placeholder"));
+}
+
+#[test]
+fn malformed_numeric_names_keep_the_whole_original_placeholder_range() {
+    for marker in [
+        "{{1name}}",
+        "{{2name}}",
+        "{{1e+}}",
+        "{{1réf}}",
+        "{{key:1type}}",
+    ] {
+        let input = format!("note = '🌿' AND x = {{{{valid}}}}\r\nAND y = {marker}");
+        let error = parse_predicate(&input).unwrap_err();
+        assert_eq!(&input[error.source_span.unwrap()], marker);
+        assert!(error.message.starts_with("Invalid placeholder"));
+    }
+    // Braces in a literal or comment must not make a later SQL lexical error
+    // look like a malformed template.
+    for input in [
+        "x = '{{' AND y = 1name",
+        "TRUE /* {{ */ AND y = 1name",
+        "x = {{valid}} AND y = 1name",
+    ] {
+        let error = parse_predicate(input).unwrap_err();
+        let offset = input.find("1name").unwrap();
+        assert_eq!(error.source_span, Some(offset..offset));
+        assert!(!error.message.starts_with("Invalid placeholder"));
+    }
+}
+
+#[test]
+fn preserves_raw_marker_error_ranges_outside_strings_and_comments() {
+    for marker in ["$1", "$123", "$name", "$1foo", "$réf", "$"] {
+        let input = format!("note = '🌿' AND id = {marker}");
+        let error = parse_predicate(&input).unwrap_err();
+        assert_eq!(&input[error.source_span.unwrap()], marker);
+        assert_eq!(error.message, "Use a named template parameter");
+    }
+}
+
+#[test]
+fn preserves_lexical_error_points_for_unterminated_literals_and_comments() {
+    for suffix in ["$tag$unclosed", "$$unclosed", "/* unclosed", "U&'unclosed"] {
+        let input = format!("note = '🌿'\r\nAND x = {suffix}");
+        let error = parse_predicate(&input).unwrap_err();
+        assert_eq!(error.source_span, Some(input.len()..input.len()), "{input}");
+    }
+    for suffix in ["'unclosed", "E'unclosed", "\"unclosed"] {
+        let input = format!("note = '🌿'\r\nAND x = {suffix}");
+        let error = parse_predicate(&input).unwrap_err();
+        let start = input.find(suffix).unwrap();
+        assert_eq!(error.source_span, Some(start..start), "{input}");
+    }
+}

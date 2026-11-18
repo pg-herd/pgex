@@ -68,12 +68,12 @@ pub(crate) fn index_table_filters<'table, 'filter>(
         ensure!(
             selected.contains(&filter.table),
             "Table {} in {field} is outside the selected tables",
-            filter.table.sql()
+            filter.table
         );
         ensure!(
             by_table.insert(&filter.table, &filter.condition).is_none(),
             "Duplicate table {} in {field}",
-            filter.table.sql()
+            filter.table
         );
     }
     Ok(by_table)

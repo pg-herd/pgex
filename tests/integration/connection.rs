@@ -158,3 +158,101 @@ async fn requires_a_trusted_certificate_even_when_url_disables_tls() -> Result<(
     trusted.connect().await?.close().await;
     Ok(())
 }
+
+#[tokio::test]
+async fn libpq_quoting_round_trips_literals_and_identifiers() -> Result<()> {
+    let database = PostgresTestDatabase::start().await?;
+    let session = database.connector().await?.connect().await?;
+    let client = session.client();
+    let relation = client
+        .quote_qualified_identifier("public", "Mixed \"雪\"; DROP TABLE nope")
+        .await?;
+    let column = {
+        let mut guard = client.connection().await?;
+        guard.get().await?.quote_identifier("va\"lue")?
+    };
+    client
+        .batch_execute(&format!("CREATE TABLE {relation} ({column} text)"))
+        .await?;
+    for setting in ["on", "off"] {
+        client
+            .batch_execute(&format!("SET standard_conforming_strings = {setting}"))
+            .await?;
+        for value in [
+            "",
+            "O'Reilly\\notes",
+            "café 雪\n\t\r",
+            "'; DROP TABLE nope; --",
+        ] {
+            let literal = client.quote_literal(value).await?;
+            client
+                .batch_execute(&format!("INSERT INTO {relation} VALUES ({literal})"))
+                .await?;
+            let row = client
+                .query_one(&format!("SELECT {literal}::text"), &[])
+                .await?;
+            assert_eq!(row.get::<String, _>(0), value);
+        }
+    }
+    let count: i64 = client
+        .query_one(&format!("SELECT count(*) FROM {relation}"), &[])
+        .await?
+        .try_get(0)?;
+    assert_eq!(count, 8);
+    assert!(client.quote_literal("before\0after").await.is_err());
+    assert!(
+        client
+            .quote_qualified_identifier("public", "before\0after")
+            .await
+            .is_err()
+    );
+    session.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn copy_reader_preserves_chunks_eof_errors_and_connection_reuse() -> Result<()> {
+    let database = PostgresTestDatabase::start().await?;
+    let session = database.connector().await?.connect().await?;
+    let mut guard = session.client().connection().await?;
+    let connection = guard.get().await?;
+    let retained = {
+        let mut copy = connection
+            .copy_out_raw("COPY (SELECT n FROM generate_series(1, 3) n) TO STDOUT")
+            .await?;
+        let first = copy.next_chunk().await?.unwrap();
+        let mut output = first.to_vec();
+        while let Some(chunk) = copy.next_chunk().await? {
+            output.extend_from_slice(&chunk);
+        }
+        assert_eq!(output, b"1\n2\n3\n");
+        assert!(copy.next_chunk().await?.is_none());
+        first
+    };
+    {
+        let mut copy = connection
+            .copy_out_raw("COPY (SELECT 1 / (n - 1) FROM generate_series(1, 2) n) TO STDOUT")
+            .await?;
+        let failure = loop {
+            match copy.next_chunk().await {
+                Err(error) => break error,
+                Ok(Some(_)) => {}
+                Ok(None) => bail!("The division by zero must fail COPY"),
+            }
+        };
+        assert_eq!(failure.code().as_deref(), Some("22012"));
+    }
+    drop(guard);
+    assert_eq!(
+        session
+            .client()
+            .query_one("SELECT 42", &[])
+            .await?
+            .get::<i32, _>(0),
+        42
+    );
+    session.close().await;
+    // COPY chunks own their libpq allocation independently of the session.
+    assert_eq!(&retained[..], b"1\n");
+    Ok(())
+}

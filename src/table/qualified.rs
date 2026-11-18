@@ -1,7 +1,6 @@
-use std::str::FromStr;
+use std::{fmt, str::FromStr};
 
 use anyhow::{Result, ensure};
-use postgres_protocol::escape::escape_identifier;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct QualifiedTable {
@@ -39,12 +38,17 @@ impl QualifiedTable {
     pub fn table(&self) -> &str {
         &self.table
     }
+}
 
-    pub(crate) fn sql(&self) -> String {
-        format!(
-            "{}.{}",
-            escape_identifier(&self.schema),
-            escape_identifier(&self.table)
+impl fmt::Display for QualifiedTable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Diagnostic formatting only. SQL identifiers are quoted by libpq on
+        // the connection that executes the statement.
+        write!(
+            f,
+            "\"{}\".\"{}\"",
+            self.schema.replace('"', "\"\""),
+            self.table.replace('"', "\"\"")
         )
     }
 }
@@ -63,15 +67,15 @@ mod tests {
     use super::QualifiedTable;
 
     #[test]
-    fn quotes_both_parts_and_preserves_case() {
+    fn displays_both_parts_and_preserves_case() {
         let table: QualifiedTable = "_Audit.Event$1".parse().unwrap();
-        assert_eq!(table.sql(), r#""_Audit"."Event$1""#);
+        assert_eq!(table.to_string(), r#""_Audit"."Event$1""#);
     }
 
     #[test]
-    fn escapes_quotes_in_catalog_names() {
+    fn displays_quotes_in_catalog_names() {
         let table = QualifiedTable::from_catalog("event logs".into(), r#"a"b"#.into());
-        assert_eq!(table.sql(), r#""event logs"."a""b""#);
+        assert_eq!(table.to_string(), r#""event logs"."a""b""#);
     }
 
     #[test]

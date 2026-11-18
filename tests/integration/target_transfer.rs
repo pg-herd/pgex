@@ -729,3 +729,62 @@ async fn wait_for_sync_sessions_to_close(observer: &Client) -> Result<()> {
     .await
     .context("Sync sessions remained open after exporter timeout")?
 }
+
+#[tokio::test]
+async fn syncs_quoted_catalog_names_with_literal_filters_and_truncate() -> Result<()> {
+    let (source, target) =
+        tokio::try_join!(PostgresTestDatabase::start(), PostgresTestDatabase::start())?;
+    let source_session = source.connector().await?.connect().await?;
+    let target_session = target.connector().await?.connect().await?;
+    let schema = r#"CREATE SCHEMA "odd ""雪";
+        CREATE TABLE "odd ""雪"."Mixed ' table" ("i""d" integer PRIMARY KEY, "la""bel" text)"#;
+    source_session.client().batch_execute(schema).await?;
+    target_session.client().batch_execute(schema).await?;
+    let label = "O'Reilly\\notes 雪'; DROP TABLE nope; --";
+    source_session
+        .client()
+        .execute(
+            r#"INSERT INTO "odd ""雪"."Mixed ' table" VALUES (1, $1), (2, 'excluded')"#,
+            &[&label],
+        )
+        .await?;
+    for truncate in [false, true] {
+        target_session.client().execute(
+            r#"INSERT INTO "odd ""雪"."Mixed ' table" VALUES (1, $1) ON CONFLICT ("i""d") DO UPDATE SET "la""bel" = excluded."la""bel""#,
+            &[&label],
+        ).await?;
+        let mut command = sync_command(&source, &source.connection_string, &target);
+        command.args([
+            "--where",
+            r#""la""bel" = {{label:text}}"#,
+            "--param",
+            &format!("label={label}"),
+        ]);
+        // Ambient libpq identity variables must not change explicit credentials.
+        command
+            .env("PGUSER", "ambient_user_must_be_ignored")
+            .env("PGDATABASE", "ambient_db_must_be_ignored");
+        if truncate {
+            command.arg("--target-truncate");
+        }
+        let output = command.output().await?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let rows = target_session
+            .client()
+            .query(
+                r#"SELECT "i""d", "la""bel" FROM "odd ""雪"."Mixed ' table""#,
+                &[],
+            )
+            .await?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].get::<i32, _>(0), 1);
+        assert_eq!(rows[0].get::<String, _>(1), label);
+    }
+    source_session.close().await;
+    target_session.close().await;
+    Ok(())
+}

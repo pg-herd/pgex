@@ -9,11 +9,21 @@ precision, and the C monetary locale to preserve values across connection defaul
 
 Install Rust through rustup and a C toolchain. This repository pins Rust 1.99.1.
 All database I/O uses unmodified libpq through the maintained `pq-sys` bindings.
-Install `build-essential`, `libpq-dev`, and `ca-certificates` on Debian or Ubuntu.
+Install `build-essential`, `clang`, `libclang-dev`, `libpq-dev`, and
+`ca-certificates` on Debian or Ubuntu.
 On macOS, run `brew install libpq` and set
-`export PQ_LIB_DIR="$(brew --prefix libpq)/lib"` before building.
+`export PQ_LIB_DIR="$(brew --prefix libpq)/lib"` before building. With Xcode or
+its Command Line Tools installed, set
+`export LIBCLANG_PATH="$(dirname "$(xcrun --find clang)")/../lib"` so the parser
+build can locate libclang.
 libpq supplies TLS through its native OpenSSL backend; no database driver is
 vendored or patched.
+
+Predicate syntax validation uses PostgreSQL's native `libpg_query` parser from
+the pinned, unmodified `pg_query` package. It runs offline and preserves syntax
+error positions as UTF-8 byte ranges in the original condition. The native parser
+is statically linked; no separate parser library or libclang is needed at runtime.
+The same native library supplies SQL scanning; pgex recognizes named placeholders from those tokens.
 
 From the repository root, build the release binary and view the CLI help.
 
@@ -75,6 +85,8 @@ certificates.
 For each side, the CLI username (`--source-user` or `--target-user`) takes
 precedence over the YAML username (`source.connection.user` or
 `target.connection.user`), then the username in that side’s URL.
+Without a supplied username, pgex uses the OS username. An omitted database name
+defaults to the resolved username. `PGUSER` and `PGDATABASE` are ignored.
 
 pgex checks that the server certificate matches the hostname and trusts its
 issuer through libpq/OpenSSL's system certificate roots. If the issuer is missing from that

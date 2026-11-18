@@ -76,7 +76,7 @@ fn compile_table_selection(tables: Option<Vec<QualifiedTable>>) -> Result<TableS
         ensure!(
             seen.insert(table),
             "Duplicate table {} in source.selection.tables",
-            table.sql()
+            table
         );
     }
     Ok(TableSelection::Explicit(tables))
@@ -124,13 +124,13 @@ fn compile_table_filters(
         ensure!(
             seen.insert(filter.table.clone()),
             "Duplicate table {} in {field}",
-            filter.table.sql()
+            filter.table
         );
         if let TableSelection::Explicit(tables) = tables {
             ensure!(
                 tables.contains(&filter.table),
                 "Table {} in {field} is outside source.selection.tables",
-                filter.table.sql()
+                filter.table
             );
         }
         compiled.push(TableFilter {

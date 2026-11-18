@@ -28,11 +28,15 @@ pub async fn lock_for_read(session: &Session, tables: &[QualifiedTable]) -> Resu
         return Ok(());
     }
 
-    let names = tables
-        .iter()
-        .map(QualifiedTable::sql)
-        .collect::<Vec<_>>()
-        .join(", ");
+    let names = {
+        let mut guard = session.client().connection().await?;
+        let connection = guard.get().await?;
+        tables
+            .iter()
+            .map(|table| connection.quote_qualified_identifier(table.schema(), table.table()))
+            .collect::<Result<Vec<_>, _>>()?
+            .join(", ")
+    };
     session
         .client()
         .batch_execute(&format!("LOCK TABLE {names} IN ACCESS SHARE MODE"))
@@ -51,7 +55,7 @@ fn describe_lock_failure(
             database_error.message(),
         )
     {
-        return anyhow::Error::new(error).context(format!("Table {} does not exist", table.sql()));
+        return anyhow::Error::new(error).context(format!("Table {} does not exist", table));
     }
     anyhow::Error::new(error).context("Lock tables for read")
 }

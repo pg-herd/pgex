@@ -23,16 +23,14 @@ pub(super) async fn resolve(
     if let Some(password) = password {
         set(&mut settings, "password", password.to_owned());
     }
+    // Explicit empty conninfo values bypass PGUSER/PGDATABASE. Libpq then
+    // resolves an empty user to the OS username and an empty database to that
+    // resolved user, preserving pgex's defaults without another OS lookup crate.
     if get(&settings, "user").is_none() {
-        set(
-            &mut settings,
-            "user",
-            whoami::username().context("Read PostgreSQL default user")?,
-        );
+        set(&mut settings, "user", String::new());
     }
     if get(&settings, "dbname").is_none() {
-        let user = get(&settings, "user").unwrap().to_owned();
-        set(&mut settings, "dbname", user);
+        set(&mut settings, "dbname", String::new());
     }
     if get(&settings, "host").is_none() && get(&settings, "hostaddr").is_none() {
         set(&mut settings, "host", "localhost".into());

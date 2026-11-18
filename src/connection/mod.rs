@@ -7,6 +7,6 @@ mod transaction;
 
 pub use client::{Client, ConnectionGuard};
 pub use connector::Connector;
-pub use libpq::{CopyIn, Error, PgConnection, QueryParameter, Row, RowData};
+pub use libpq::{CopyIn, CopyOut, Error, PgConnection, QueryParameter, Row, RowData};
 pub(crate) use options::validate_connection_string;
 pub use session::Session;

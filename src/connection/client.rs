@@ -20,6 +20,20 @@ impl Client {
         }
         Ok(ConnectionGuard { connection })
     }
+    pub async fn quote_literal(&self, value: &str) -> Result<String, Error> {
+        self.connection().await?.get().await?.quote_literal(value)
+    }
+    pub async fn quote_qualified_identifier(
+        &self,
+        schema: &str,
+        name: &str,
+    ) -> Result<String, Error> {
+        self.connection()
+            .await?
+            .get()
+            .await?
+            .quote_qualified_identifier(schema, name)
+    }
     pub async fn batch_execute(&self, sql: &str) -> Result<(), Error> {
         self.connection()
             .await?

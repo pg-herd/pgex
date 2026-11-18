@@ -1,8 +1,6 @@
-use crate::connection::CopyIn;
+use crate::connection::{CopyIn, PgConnection};
 use anyhow::{Context, Result};
 use bytes::{Buf, Bytes, BytesMut};
-use futures_util::TryStreamExt;
-use postgres_protocol::escape::escape_identifier;
 
 use crate::connection::Session;
 
@@ -29,33 +27,50 @@ pub(super) async fn copy_table(
     table: &PostgresTable,
     transaction: CopyTransaction,
 ) -> Result<TableWriteResult> {
-    let relation = table.name.sql();
-    let columns = table
+    let mut destination_guard = destination.client().connection().await?;
+    let destination = destination_guard.get().await?;
+    let mut source_guard = source.client().connection().await?;
+    let source = source_guard.get().await?;
+    let source_relation =
+        source.quote_qualified_identifier(table.name.schema(), table.name.table())?;
+    let target_relation =
+        destination.quote_qualified_identifier(table.name.schema(), table.name.table())?;
+    let source_columns = table
         .columns
         .iter()
-        .map(|column| escape_identifier(column))
-        .collect::<Vec<_>>()
+        .map(|column| source.quote_identifier(column))
+        .collect::<Result<Vec<_>, _>>()?
+        .join(", ");
+    let target_columns = table
+        .columns
+        .iter()
+        .map(|column| destination.quote_identifier(column))
+        .collect::<Result<Vec<_>, _>>()?
         .join(", ");
     let copy_filter = table
         .copy_filter
         .as_ref()
-        .map(copy_condition)
+        .map(|predicate| copy_condition(predicate, source))
         .transpose()?
         .map_or_else(String::new, |condition| where_clause(&condition));
-    let copy_out =
-        format!("COPY (SELECT {columns} FROM {relation}{copy_filter}) TO STDOUT (FORMAT TEXT)");
-    let copy_columns = if columns.is_empty() {
+    let copy_out = format!(
+        "COPY (SELECT {source_columns} FROM {source_relation}{copy_filter}) TO STDOUT (FORMAT TEXT)"
+    );
+    let copy_columns = if target_columns.is_empty() {
         String::new()
     } else {
-        format!(" ({columns})")
+        format!(" ({target_columns})")
     };
-    let copy_in = format!("COPY {relation}{copy_columns} FROM STDIN (FORMAT TEXT)");
-
+    let copy_in = format!("COPY {target_relation}{copy_columns} FROM STDIN (FORMAT TEXT)");
     copy_rows(source, destination, &copy_out, &copy_in, transaction).await
 }
 
 pub(super) async fn delete_rows(destination: &Session, table: &PostgresTable) -> Result<()> {
-    let mut sql = format!("DELETE FROM {}", table.name.sql());
+    let relation = destination
+        .client()
+        .quote_qualified_identifier(table.name.schema(), table.name.table())
+        .await?;
+    let mut sql = format!("DELETE FROM {relation}");
     let mut binds = Vec::new();
     if let Some(predicate) = &table.delete_filter {
         sql.push_str(&where_clause(&predicate.sql));
@@ -89,21 +104,17 @@ pub(super) async fn set_replica_role_if_enabled(
 }
 
 async fn copy_rows(
-    source: &Session,
-    destination: &Session,
+    source: &mut PgConnection,
+    destination: &mut PgConnection,
     copy_out: &str,
     copy_in: &str,
     transaction: CopyTransaction,
 ) -> Result<TableWriteResult> {
-    let mut destination_guard = destination.client().connection().await?;
-    let output = destination_guard
-        .get()
-        .await?
+    let output = destination
         .copy_in_raw(copy_in)
         .await
         .context("Start destination COPY")?;
-    let mut source_guard = source.client().connection().await?;
-    let input = match source_guard.get().await?.copy_out_raw(copy_out).await {
+    let mut input = match source.copy_out_raw(copy_out).await {
         Ok(input) => input,
         Err(error) => {
             let failure = anyhow::Error::new(error).context("Start source COPY");
@@ -115,7 +126,6 @@ async fn copy_rows(
             };
         }
     };
-    tokio::pin!(input);
     let mut writer = DestinationCopyWriter {
         sink: output,
         payload_bytes: 0,
@@ -123,12 +133,7 @@ async fn copy_rows(
 
     let copied: Result<()> = async {
         let mut buffer = BytesMut::with_capacity(COPY_BUFFER_BYTES);
-        while let Some(mut chunk) = input
-            .as_mut()
-            .try_next()
-            .await
-            .context("Read source COPY")?
-        {
+        while let Some(mut chunk) = input.next_chunk().await.context("Read source COPY")? {
             if chunk.len() < COPY_BUFFER_BYTES - buffer.len() {
                 buffer.extend_from_slice(&chunk);
                 continue;
