@@ -1,265 +1,424 @@
 # pgex
 
-pgex refreshes tables from PostgreSQL. For each table, it deletes
-the destination rows in scope and streams their replacements using text COPY.
-Worker sessions use ISO dates, PostgreSQL interval formatting, full floating-point
-precision, and the C monetary locale to preserve values across connection defaults.
+Refresh a PostgreSQL database with exactly the data you need.
 
-## Build
+Copy whole tables or select rows with SQL conditions. Save reusable settings in
+YAML, supply parameters from the command line, and copy multiple tables in
+parallel. By default, every source table is read from the same snapshot, so your
+dataset reflects one point in time.
 
-Install Rust through rustup and a C toolchain. This repository pins Rust 1.99.1.
-All database I/O uses unmodified libpq through the maintained `pq-sys` bindings.
-Install `build-essential`, `clang`, `libclang-dev`, `libpq-dev`, and
-`ca-certificates` on Debian or Ubuntu.
-On macOS, run `brew install libpq` and set
-`export PQ_LIB_DIR="$(brew --prefix libpq)/lib"` before building. With Xcode or
-its Command Line Tools installed, set
-`export LIBCLANG_PATH="$(dirname "$(xcrun --find clang)")/../lib"` so the parser
-build can locate libclang.
-libpq supplies TLS through its native OpenSSL backend; no database driver is
-vendored or patched.
+Use pgex to refresh a development database, prepare a test dataset, or copy a
+selected slice of data into another PostgreSQL database.
 
-Predicate syntax validation uses PostgreSQL's native `libpg_query` parser from
-the pinned, unmodified `pg_query` package. It runs offline and preserves syntax
-error positions as UTF-8 byte ranges in the original condition. The native parser
-is statically linked; no separate parser library or libclang is needed at runtime.
-The same native library supplies SQL scanning; pgex recognizes named placeholders from those tokens.
+- **Choose your data:** whole tables, a shared WHERE condition, or individual table filters.
+- **Reuse your setup:** YAML configuration with explicit command-line changes.
+- **Check inputs early:** SQL syntax and parameter validation with errors pointing to the condition.
+- **Control the refresh:** replace matching rows, append rows, or truncate before copying.
 
-From the repository root, build the release binary and view the CLI help.
+[Install](#install) · [Quick start](#quick-start) · [Filter rows](#filter-rows) ·
+[YAML configuration](#yaml-configuration) · [All options](#all-options) ·
+[Build and contribute](CONTRIBUTING.md)
 
-```sh
-cargo build --release --locked
-./target/release/pgex --help
-```
+## Install
 
-## Release binaries
+Download the archive matching your platform from [GitHub Releases](https://github.com/pg-herd/pgex/releases),
+extract it, and put the `pgex` executable on your PATH.
 
-Download the `pgex-v<version>-<target>.tar.gz` archive for your platform from
-GitHub Releases. Install the runtime packages listed below before running the binary.
-
-| Platform | Archive target | Runtime requirements |
+| Platform | Archive target | Required runtime packages |
 | --- | --- | --- |
-| macOS 15+ on Apple Silicon | `aarch64-apple-darwin` | macOS system libraries and Homebrew `libpq` (`brew install libpq`). |
-| Linux amd64 | `x86_64-unknown-linux-gnu` | Debian 12 (Bookworm) baseline, with glibc, `libgcc-s1`, `libpq5`, and `ca-certificates`. |
-| Linux arm64 | `aarch64-unknown-linux-gnu` | Debian 12 (Bookworm) baseline, with the arm64 versions of the same runtime packages. |
+| macOS 15+ on Apple Silicon | `aarch64-apple-darwin` | Homebrew `libpq`: `brew install libpq`. |
+| Linux x86-64 | `x86_64-unknown-linux-gnu` | On Debian 12: `sudo apt-get install libgcc-s1 libpq5 ca-certificates`. |
+| Linux ARM64 | `aarch64-unknown-linux-gnu` | The same packages, for ARM64. |
 
-On Debian 12, install the Linux runtime packages with
-`sudo apt-get install libgcc-s1 libpq5 ca-certificates`. On another glibc-based
-distribution, check runtime compatibility with `ldd ./pgex`.
-The Linux archives require a glibc environment. On macOS, use
-`otool -L ./pgex` to inspect the paths used by the loader. Private PostgreSQL
-CAs can be supplied with `--ca` and `--target-ca`.
+Linux release binaries target glibc systems, with Debian 12 as the baseline.
+Each archive includes `runtime-dependencies.txt` and the third-party license files
+listed under [License](#license). To verify a download, place its
+`.sha256` file alongside it and run `shasum -a 256 -c <archive>.sha256`.
 
-Each archive includes the build's `runtime-dependencies.txt`. To check the
-archive before extracting, put its `.sha256` file next to it and run
-`shasum -a 256 -c <archive>.sha256`. Run `./pgex --help` after extracting to
-check that the loader can start the binary.
+Run `pgex --help` to check the installation. For a source build, see
+[Building and contributing](CONTRIBUTING.md).
 
-### Building a release
+## Quick start
 
-The [release workflow](.github/workflows/release.yml) uses an Apple Silicon
-runner and one native Linux runner per architecture. Both Linux jobs build
-with the [Debian 12 Dockerfile](release/linux.Dockerfile) and run the executable
-in a clean Debian 12 runtime image. The macOS job checks the binary's architecture
-and dynamic library paths, then runs it on macOS. All three build with the pinned
-Rust toolchain and `Cargo.lock`.
-
-Run **Release binaries** manually in GitHub Actions to build and download the
-verified artifacts. Pushing a tag that matches the Cargo package version
-(for example, `v0.1.0`) publishes the three archives and their SHA-256 files
-after all builds pass. When updating the Rust pin, update the Linux builder's
-image version in the Dockerfile too.
-
-## Connect to the source and destination
-
-Supply both `--source` and `--target` as PostgreSQL URLs or libpq-style
-connection strings. Use TLS-enabled servers and the hostnames on their
-certificates.
+The source and destination tables must already exist. Pgex copies rows; it does
+not create schemas or synchronize sequence counters. Use PostgreSQL 14 or newer
+with TLS enabled. Source credentials need permission to read the selected tables;
+destination credentials need permission to read, insert, and delete their rows.
 
 ```sh
-./target/release/pgex \
+export PGEX_SOURCE_PASSWORD='source-password'
+export PGEX_TARGET_PASSWORD='target-password'
+
+pgex \
   --source 'postgresql://sync_user@source.example.com/app' \
-  --target 'postgresql://sync_user@target.example.com/app'
+  --target 'postgresql://sync_user@target.example.com/app' \
+  --tables public.orders,public.order_items
 ```
 
-For each side, the CLI username (`--source-user` or `--target-user`) takes
-precedence over the YAML username (`source.connection.user` or
-`target.connection.user`), then the username in that side’s URL.
-Without a supplied username, pgex uses the OS username. An omitted database name
-defaults to the resolved username. `PGUSER` and `PGDATABASE` are ignored.
+This refreshes every row in the two destination tables. Omit `--tables` to select
+all ordinary source tables and partition roots in non-system schemas. A successful
+run prints `Sync complete.`
 
-pgex checks that the server certificate matches the hostname and trusts its
-issuer through libpq/OpenSSL's system certificate roots. If the issuer is missing from that
-store, supply a PEM CA file with `--ca /path/to/ca.pem`. For Amazon RDS, use
-the CA bundle for your instance.
-[Amazon RDS PostgreSQL TLS documentation](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/PostgreSQL.Concepts.General.SSL.html)
+Source and destination layouts are checked before copying. See
+[Refresh behavior](#refresh-behavior) for transaction and failure behavior.
 
-Connection strings are parsed by libpq itself. Native options such as host
-lists, paired ports, `hostaddr`, startup `options`, `target_session_attrs`, and
-TCP keepalives are passed through. `connect_timeout` supplies the connection
-attempt's deadline; without a nonzero value, pgex uses 30 seconds.
-pgex always requires verified TLS, including when the URL requests a weaker mode.
-It uses `sslrootcert=system` with libpq 16 or newer; on libpq 15 it uses the
-platform CA bundle. Supply `--ca` or `--target-ca` for a private issuer.
-The PostgreSQL server version is independent of the installed libpq client version.
+### Connections and credentials
 
-### Password
+Both connections require verified TLS. For a private certificate authority, use
+`--ca /path/to/source-ca.pem` and `--target-ca /path/to/target-ca.pem` independently.
+Otherwise, pgex uses the system trust store. The hostname must match the server's
+certificate; requesting a weaker TLS mode in a connection URL does not disable
+verification.
 
-pgex resolves the password independently for each connection, in this order.
+The CLI accepts PostgreSQL URLs or libpq keyword/value connection strings. YAML
+`connection.url` fields require a `postgresql://` or `postgres://` URL. Connection
+URL options can specify host lists, paired ports, `hostaddr`, startup `options`,
+`target_session_attrs`, TCP keepalives, and other native libpq settings. The
+connection deadline is `connect_timeout` seconds, or 30 seconds when it is absent
+or zero. Pgex enforces verified TLS and disables GSS encryption in favor of TLS.
+
+For each side, the username is chosen in this order:
+
+1. `--source-user` or `--target-user`.
+2. YAML `source.connection.user` or `target.connection.user`.
+3. The username in the resolved connection URL.
+4. The operating-system username.
+
+An omitted database name defaults to the resolved username. `PGUSER` and
+`PGDATABASE` are ignored.
+
+Passwords are resolved independently for the source and destination:
 
 | Priority | Source | Destination |
 | --- | --- | --- |
 | 1 | `--source-password` | `--target-password` |
-| 2 | `source.connection.password` in YAML | `target.connection.password` in YAML |
+| 2 | YAML `source.connection.password` | YAML `target.connection.password` |
 | 3 | `PGEX_SOURCE_PASSWORD` | `PGEX_TARGET_PASSWORD` |
-| 4 | Password in the source connection string | Password in the target connection string |
+| 4 | Password in the resolved source URL | Password in the resolved target URL |
 
-If none is supplied, pgex attempts to connect without a password; ambient
-`PGPASSWORD` and implicit password files do not replace the resolved credentials.
+Without a password, pgex attempts passwordless authentication. Ambient
+`PGPASSWORD` and implicit password files do not supply credentials. In CI, provide
+`PGEX_SOURCE_PASSWORD` and `PGEX_TARGET_PASSWORD` through your secret store.
 
-In CI, expose the password as the `PGEX_SOURCE_PASSWORD` environment variable
-from your secret store and keep the command line password-free.
+## Filter rows
 
-### Table selection
-
-Without a filter, pgex refreshes every row in each selected table. Use
-`--where` to set a shared SQL condition, or `--config` to supply table-specific
-filters and column rules. Pass filter values with repeatable `--param name=value`
-options. By default, pgex applies the effective source filter to the destination
-DELETE. Use `--target-skip-delete` to keep existing destination rows.
-
-`--tables` accepts one comma-separated list of `schema.table` names, with no
-spaces around commas. pgex holds read locks on the selected source tables
-until the run finishes and reads their layouts while those locks are held.
-When `--tables` is omitted, pgex discovers and locks ordinary tables and
-partition roots across non-system schemas.
+Give `--where` a SQL condition without the `WHERE` keyword. Use named parameters
+for values:
 
 ```sh
-./target/release/pgex \
+pgex \
   --source 'postgresql://sync_user@source.example.com/app' \
   --target 'postgresql://sync_user@target.example.com/app' \
-  --ca /path/to/ca.pem \
-  --where 'account_id = ANY({{accounts:bigint[]}})' \
-  --param accounts=1,2,3 \
-  --tables public.events,public.documents
+  --tables public.orders \
+  --where 'tenant_id = ANY({{tenants:bigint[]}}) AND created_at >= {{since:date}}' \
+  --param tenants=42,43 \
+  --param since=2026-01-01
 ```
 
-The PostgreSQL destination holds table locks on a dedicated connection and
-compares the layouts before entering the transfer step. Use
-`--target-validate-layouts false` to skip the comparison. Use
-`--no-target-locks` (YAML `target.transfer.no_locks: true`) to skip the
-job-wide destination locks. Layout validation remains enabled by default.
-Avoid destination schema changes for the duration of an unlocked transfer,
-and pause writes to the destination rows being refreshed.
-A successful run prints `Sync complete.`
+By default, the same condition selects source rows and destination rows to delete.
+Rows outside that condition remain in the destination. A YAML
+`target.delete_filters` entry can give a table a different deletion condition.
 
-Use `--target-truncate` (YAML `target.transfer.truncate: true`) to replace
-destination DELETE with `TRUNCATE ... CASCADE` before each table’s COPY.
-This mode skips the job-wide destination locks and commits each truncate
-before COPY starts. COPY commits per table. A source WHERE filter still
-limits the incoming rows, but TRUNCATE removes all existing rows in the
-destination table. CASCADE also empties tables that reference it through
-foreign keys, including tables outside the selection or tables another
-worker already loaded. If COPY fails, the truncate stays committed. Use
-distinct source and destination tables so source locks can coexist with
-destination truncation.
+Conditions can contain subqueries and PostgreSQL functions. SQL syntax and
+parameter values are checked before connecting. PostgreSQL checks referenced
+objects and SQL type compatibility when it executes the condition.
 
-Use `--target-ca` if the destination's CA is outside the system certificate trust store.
+### Parameters
 
-### Source snapshot
+A placeholder is `{{name}}` or `{{name:type}}`. Names start with an ASCII letter or
+underscore and contain only ASCII letters, digits, and underscores. Names and type
+annotations are case-sensitive. Placeholders are recognized outside SQL strings,
+quoted identifiers, and comments; braces inside those stay literal text. A
+placeholder supplies a value, not a table name, column name, or SQL fragment.
 
-By default, all source tables are copied from one shared snapshot. Pass
-`--source-snapshot per-statement` to give each source COPY its own snapshot.
-On a live source, different tables can then see different commits. pgex holds
-source table locks in both modes.
+| Type | Example value | Accepted form |
+| --- | --- | --- |
+| `text` (also the default when omitted) | `hello` | Text. |
+| `integer` | `42` | Signed 32-bit integer. |
+| `bigint` | `42` | Signed 64-bit integer. |
+| `boolean` | `true` | `true` or `false`. |
+| `date` | `2026-01-01` | Valid `YYYY-MM-DD` date, years 0001–9999. |
+| `integer[]` | `1,2,3` | Nonempty comma-separated list of 32-bit integers. |
+| `bigint[]` | `1,2,3` | Nonempty comma-separated list of 64-bit integers. |
 
-Set `source.snapshot.mode` to `shared` or `per-statement` in YAML. An explicit
-CLI value takes precedence. For example, `--source-snapshot shared` overrides
-`per-statement` in YAML.
+An untyped placeholder is text; declare a type or use an explicit SQL cast when
+another type is needed. One named value can appear multiple times, with different
+types at different occurrences, provided it is valid for every occurrence.
 
-### Disconnect checks
+Supply values through repeatable `--param NAME=VALUE` arguments or a YAML `params`
+map. YAML parameter values must be strings: quote numbers, booleans, dates, and
+array values. CLI values replace YAML values with the same name. Missing, invalid,
+duplicate, or unused parameter values are errors. NUL characters are rejected.
 
-Source transactions ask PostgreSQL to check for closed client connections
-every 1,000 milliseconds while a query is running. Use
-`--client-connection-check-interval-ms 250` to override the interval or `0` to
-disable the checks. The setting is local to each source transaction and
-requires PostgreSQL 14 or later. A nonzero interval requires server platform
-support for connection polling.
+## YAML configuration
 
-### Source transaction timeouts
-
-| CLI option | Limit in milliseconds |
-| --- | --- |
-| `--source-exporter-transaction-timeout-ms` | Total lifetime of the source table lock transaction |
-| `--source-exporter-idle-in-transaction-timeout-ms` | Time the source table lock session can wait between commands |
-| `--source-reader-transaction-timeout-ms` | Total lifetime of each source reader transaction |
-| `--source-reader-idle-in-transaction-timeout-ms` | Time a reader can wait between commands in its transaction |
-
-Each timeout is disabled by default on pgex's source connections,
-even if the PostgreSQL role has a timeout configured. Pass a positive value
-to enable it. Transaction lifetime limits require PostgreSQL 17 or later.
-Reader options apply to the metadata reader and the transfer readers. The
-table lock session stays idle during transfer, so its idle limit must allow
-that part of the sync to finish. If it disconnects, pgex stops the workers
-and closes their connections. Earlier destination commits remain applied.
-
-### Source reader limit
-
-Use `--source-reader-limit` to set the maximum number of concurrent source
-reader sessions for a job. The default is 8. Source table locks use a separate
-session. Reading source layouts opens one source reader.
-
-### PostgreSQL transfers
-
-Use `--target-parallel-transfers` to set how many PostgreSQL worker threads
-can run at once. The default is 8. If the requested count exceeds the source
-reader limit, pgex warns and uses the lower limit. Each worker runs on its own
-OS thread and keeps one source connection and one destination connection
-across transfers. In shared mode, each worker imports the snapshot once. The destination lock uses a separate connection.
-
-Workers take one table at a time from the shared queue. After each write, the
-worker adds the destination payload bytes to the transaction's running total.
-It claims another table while the total is below the target. When a table
-brings the total to or above the target, the worker commits before claiming
-another table. Use `--target-commit-group-mib` to change the 32 MiB default.
-A failed transaction rolls back that group's deletes and copies. Earlier
-committed groups remain applied.
-
-Pass `--target-skip-delete` to insert selected source rows without deleting
-destination rows first. COPY uses normal insert semantics, so a duplicate key
-or other constraint violation can fail the commit group.
-
-Destination triggers and foreign keys run by default. To use the POC's
-replica trigger behavior, pass `--target-replica-role`. This requires
-permission to set `session_replication_role` and disables ordinary triggers,
-including foreign-key checks, during each destination commit group.
-
-Row security follows each PostgreSQL connection's settings by default. Use
-`--source-row-security-off` to set `row_security = off` for each source
-worker's source transaction, or `--target-row-security-off` to set it for
-each destination worker's connection. With this setting, PostgreSQL returns
-an error if a statement would be subject to a row-level security policy.
-
-## Tests
-
-Add a regression test for behavior changes and bug fixes. Put small unit tests
-in an inline `#[cfg(test)] mod tests`. For tests with more setup, keep the named
-production module file and put its tests in a child file, as in
-`src/snapshot/lease.rs` and `src/snapshot/lease/tests.rs`. Use Mockall to verify
-interactions at an existing dependency boundary. Put PostgreSQL and end-to-end
-CLI tests in the Cargo integration target under `tests/integration/`.
+Run a saved configuration with:
 
 ```sh
-cargo test --locked --lib --bin pgex  # Unit tests
-cargo test --locked --test integration  # Integration tests
-cargo test --locked                    # Both
+pgex --config pgex.yml
 ```
 
-Start Docker or Docker Desktop for the integration target. Testcontainers starts
-a disposable PostgreSQL 17 container for each integration test, generates its
-TLS certificate and password, and removes it afterward. Docker pulls the pinned
-`postgres:17.11-bookworm` image on the first run if needed.
+This example shows every supported configuration field. Most are optional; their
+normal defaults are shown for the snapshot, session, and transfer settings. The
+selection and deletion conditions illustrate a tenant-specific refresh. Remove
+optional credential and CA lines you do not need.
+
+```yaml
+source:
+  connection:
+    url: "postgresql://source.example.com/app"
+    user: sync_user
+    # password: "source-password"  # Or use PGEX_SOURCE_PASSWORD.
+    # ca_file: "/path/to/source-ca.pem"  # Omit for the system trust store.
+  session:
+    row_security_off: false
+  snapshot:
+    mode: shared
+    reader_connection_limit: 8
+    client_connection_check_interval_ms: 1000
+    exporter_timeouts:
+      transaction_ms: 0
+      idle_in_transaction_ms: 0
+    reader_timeouts:
+      transaction_ms: 0
+      idle_in_transaction_ms: 0
+  selection:
+    tables:
+      - public.orders
+      - public.order_items
+      - public.products
+    where: "TRUE"
+    table_rules:
+      - has_column: tenant_id
+        where: "tenant_id = ANY({{tenants:bigint[]}})"
+    table_filters:
+      public.orders:
+        where: >-
+          tenant_id = ANY({{tenants:bigint[]}})
+          AND created_at >= {{since:date}}
+
+target:
+  connection:
+    url: "postgresql://target.example.com/app"
+    user: sync_user
+    # password: "target-password"  # Or use PGEX_TARGET_PASSWORD.
+    # ca_file: "/path/to/target-ca.pem"  # Omit for the system trust store.
+  session:
+    row_security_off: false
+    replica_role: false
+  transfer:
+    workers: 8
+    commit_group_mib: 32
+    validate_layouts: true
+    no_locks: false
+    skip_delete: false
+    truncate: false
+  delete_filters:
+    public.orders: "tenant_id = ANY({{tenants:bigint[]}})"
+
+params:
+  tenants: "42,43"
+  since: "2026-01-01"
+```
+
+In this example, `public.orders` copies rows for the selected tenants since the
+chosen date, but deletes all destination rows for those tenants. Other tables
+with `tenant_id` use the column rule. Tables without that column use `TRUE`,
+which selects every row.
+
+Unknown YAML fields are rejected. File paths, including `ca_file`, are relative
+to the current working directory. Explicit table names use simple `schema.table`
+identifiers; an explicit table list must be nonempty and contain no duplicates.
+Omitting the list enables discovery, including catalog names requiring SQL quoting.
+
+### Which settings win?
+
+Explicit CLI settings take precedence over the corresponding YAML fields; omitted
+CLI settings leave YAML values intact. Defaults apply only after both inputs are
+combined. `--tables` replaces the YAML table list. Credentials remain distinct
+fields: changing a URL does not discard a separately configured username or password.
+
+For example:
+
+```sh
+pgex --config pgex.yml \
+  --param tenants=99 \
+  --target-parallel-transfers 4 \
+  --target-skip-delete=false
+```
+
+This changes the tenant value and worker count and explicitly disables append mode.
+
+For each source table, pgex chooses exactly one condition, in this order:
+
+1. Its entry in `source.selection.table_filters`.
+2. The first matching `source.selection.table_rules` entry, in YAML order.
+3. The shared `source.selection.where` condition.
+4. No condition, selecting all rows.
+
+Conditions are chosen, not combined. **CLI `--where` replaces only the shared
+condition:** table-specific filters and matching column rules still take priority.
+The column rule matches an exact, case-sensitive column name. Filters for tables
+outside the selected set are rejected.
+
+A table's `target.delete_filters` entry takes priority for deletion. Without one,
+its effective source condition is used. `skip_delete` skips deletion, while
+`truncate` replaces it with whole-table truncation and takes priority over
+`skip_delete`.
+
+Every YAML condition is syntax-checked when the file is loaded, even if a CLI
+setting will replace it. Parameter values are checked for all conditions retained
+after merging, including rules that might not match a table in this run.
+
+## Refresh behavior
+
+### Snapshots and locks
+
+The default `shared` snapshot reads all source tables from one point in time.
+With `per-statement`, each source COPY sees its own snapshot; different tables can
+reflect different commits on a changing source. Both modes hold source table read
+locks until the run ends. Normal source writes can continue; the locks prevent
+conflicting schema changes.
+
+Destination table read locks and layout validation are enabled by default. Use
+`--no-target-locks` to skip those destination locks; it does not disable layout
+validation or source locks. Avoid schema changes during an unlocked transfer and
+concurrent writes to destination rows being refreshed. Layout validation can be
+disabled separately with `--target-validate-layouts false`.
+
+### Transactions and parallelism
+
+Pgex copies whole tables in parallel, using 8 workers by default. Concurrency is
+capped by the source reader limit, also 8 by default. Source table locks and,
+when enabled, destination table locks each use an additional connection.
+
+Each worker groups tables into a transaction. It keeps adding tables while its
+actual copied payload is below 32 MiB, then commits before taking another table.
+A whole table can take a transaction beyond that threshold. Change the threshold
+with `--target-commit-group-mib`.
+
+A failed transaction rolls back that group's deletes and copies. Earlier committed
+groups remain applied; the entire run is not a single destination transaction.
+Loss of the source lock/snapshot session stops the workers and rolls back their
+unfinished destination transactions.
+
+### Append and truncate
+
+`--target-skip-delete` appends the selected source rows without removing existing
+destination rows. Inserts still obey constraints, so duplicate keys can fail the
+transaction. This is an append operation, not an upsert.
+
+`--target-truncate` runs `TRUNCATE ... CASCADE` before each table is copied. It
+requires TRUNCATE privileges, skips the job-wide destination locks, and commits
+the truncate separately. COPY normally commits per table; with replica role
+enabled, its setup and COPY are committed together per table.
+
+**Truncate removes all destination rows, even with a source WHERE condition.**
+CASCADE can also empty referencing tables outside the selection or tables already
+copied by another worker. If COPY fails, the truncate stays committed. Use distinct
+source and destination tables for this mode.
+
+### Triggers, row security, and timeouts
+
+Destination triggers and foreign-key checks run normally. `--target-replica-role`
+uses PostgreSQL replica trigger behavior during copying, skipping ordinary
+triggers and their foreign-key checks. It requires permission to set
+`session_replication_role`.
+
+`--source-row-security-off` and `--target-row-security-off` ask PostgreSQL to fail
+if a statement would be subject to a row-level security policy. They do not grant
+permission to bypass a policy. When these flags are false, connection row-security
+settings apply normally.
+
+Source disconnect checks run every 1,000 ms during active queries. Set
+`--client-connection-check-interval-ms 0` to disable them. Nonzero checks require
+server-platform support for connection polling.
+
+All four source transaction timeouts default to 0 (disabled), replacing inherited
+role defaults on those sessions. Transaction lifetime limits require PostgreSQL
+17+. The source lock/snapshot session stays idle during transfer, so its idle
+limit must accommodate that period. Reader limits apply to metadata and transfer
+reader transactions. All millisecond settings accept 0–2,147,483,647.
+
+## All options
+
+CLI values below use their YAML equivalent and then the listed default when the
+CLI option is absent. Flags with `[=BOOL]` accept a bare flag for `true`.
+Use `--target-skip-delete=false`, for example, to explicitly disable a YAML setting.
+`--target-validate-layouts` requires a `true` or `false` value, for example
+`--target-validate-layouts false`.
+
+### Configuration and connections
+
+| CLI option | YAML setting | Default / purpose |
+| --- | --- | --- |
+| `--config PATH` | — | Optional YAML configuration file. |
+| `--source URL` | `source.connection.url` | Required through CLI or YAML; source connection. |
+| `--source-user NAME` | `source.connection.user` | URL username, then OS username. |
+| `--source-password PASSWORD` | `source.connection.password` | Source password; see credential precedence above. |
+| `--ca PATH` | `source.connection.ca_file` | System trust store; optional source CA file. |
+| `--target URL` | `target.connection.url` | Required through CLI or YAML; destination connection. |
+| `--target-user NAME` | `target.connection.user` | URL username, then OS username. |
+| `--target-password PASSWORD` | `target.connection.password` | Destination password; see credential precedence above. |
+| `--target-ca PATH` | `target.connection.ca_file` | System trust store; optional destination CA file. |
+| `-h`, `--help` | — | Print CLI help and exit. |
+
+### Tables and parameters
+
+| CLI option | YAML setting | Default / purpose |
+| --- | --- | --- |
+| `--tables TABLE_LIST` | `source.selection.tables` | Discover source tables; explicit input is one comma-separated list with no spaces around commas. |
+| `--where PREDICATE` | `source.selection.where` | No shared condition; supply a SQL expression without `WHERE`. |
+| `--param NAME=VALUE` | `params.NAME` | No parameter values; repeat for different names. |
+
+### Source sessions and snapshots
+
+| CLI option | YAML setting | Default / purpose |
+| --- | --- | --- |
+| `--source-snapshot MODE` | `source.snapshot.mode` | `shared`; accepts `shared` or `per-statement`. |
+| `--source-reader-limit N` | `source.snapshot.reader_connection_limit` | `8`; positive maximum number of concurrent source readers. |
+| `--source-row-security-off[=BOOL]` | `source.session.row_security_off` | `false`; fail statements subject to row security. |
+| `--client-connection-check-interval-ms N` | `source.snapshot.client_connection_check_interval_ms` | `1000`; disconnect-check interval, 0 disables it. |
+| `--source-exporter-transaction-timeout-ms N` | `source.snapshot.exporter_timeouts.transaction_ms` | `0`; source lock/snapshot transaction lifetime. Requires PostgreSQL 17+ when nonzero. |
+| `--source-exporter-idle-in-transaction-timeout-ms N` | `source.snapshot.exporter_timeouts.idle_in_transaction_ms` | `0`; source lock/snapshot session's idle time inside its transaction. |
+| `--source-reader-transaction-timeout-ms N` | `source.snapshot.reader_timeouts.transaction_ms` | `0`; each source reader transaction's lifetime. Requires PostgreSQL 17+ when nonzero. |
+| `--source-reader-idle-in-transaction-timeout-ms N` | `source.snapshot.reader_timeouts.idle_in_transaction_ms` | `0`; each source reader's idle time inside its transaction. |
+
+### Destination sessions and transfers
+
+| CLI option | YAML setting | Default / purpose |
+| --- | --- | --- |
+| `--target-parallel-transfers N` | `target.transfer.workers` | `8`; positive worker count, capped by the source reader limit. |
+| `--target-commit-group-mib N` | `target.transfer.commit_group_mib` | `32`; positive copied-payload threshold in MiB per worker transaction. |
+| `--target-validate-layouts BOOL` | `target.transfer.validate_layouts` | `true`; compare source and destination layouts before transfer. |
+| `--no-target-locks[=BOOL]` | `target.transfer.no_locks` | `false`; skip job-wide destination table locks. |
+| `--target-skip-delete[=BOOL]` | `target.transfer.skip_delete` | `false`; append rows without a preceding DELETE. |
+| `--target-truncate[=BOOL]` | `target.transfer.truncate` | `false`; truncate and commit each destination table before copying. |
+| `--target-replica-role[=BOOL]` | `target.session.replica_role` | `false`; use replica trigger behavior for destination copying. |
+| `--target-row-security-off[=BOOL]` | `target.session.row_security_off` | `false`; fail statements subject to row security. |
+
+### YAML-only filters
+
+| YAML setting | Default / purpose |
+| --- | --- |
+| `source.selection.table_rules` | Empty list. Rules are evaluated in YAML order. |
+| `source.selection.table_rules[].has_column` | Required for each rule; exact column name to match. |
+| `source.selection.table_rules[].where` | Required for each rule; condition for matching tables. |
+| `source.selection.table_filters` | Empty map keyed by `schema.table`. |
+| `source.selection.table_filters.<schema.table>.where` | Required for each entry; table-specific source condition. |
+| `target.delete_filters` | Empty map keyed by `schema.table`. |
+| `target.delete_filters.<schema.table>` | Required for each entry; destination deletion condition, written directly as a string. |
+
+The top-level YAML sections are `source`, `target`, and `params`. All fields and
+sections are optional except that both connection URLs must be supplied through
+CLI or YAML, and rule/filter entries require their fields as listed above.
+
+## Building and contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for source builds, development setup, testing,
+and release packaging.
 
 ## License
 
-pgex is licensed under the [MIT License](LICENSE).
+Pgex is licensed under [MIT](LICENSE). Included dependencies retain their own
+licenses; see [third-party license notices](licenses/).

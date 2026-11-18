@@ -72,8 +72,9 @@ jobs:
       - name: Package the verified binary
         shell: bash
         run: |
-          mkdir -p "artifacts" "$ARCHIVE_NAME"
-          cp release-output/pgex release-output/runtime-dependencies.txt README.md LICENSE "$ARCHIVE_NAME/"
+          mkdir -p "artifacts" "$ARCHIVE_NAME/licenses"
+          cp release-output/pgex release-output/runtime-dependencies.txt README.md CONTRIBUTING.md LICENSE "$ARCHIVE_NAME/"
+          cp licenses/*.txt "$ARCHIVE_NAME/licenses/"
           COPYFILE_DISABLE=1 tar -czf "artifacts/$ARCHIVE_NAME.tar.gz" "$ARCHIVE_NAME"
           cd artifacts
           shasum -a 256 "$ARCHIVE_NAME.tar.gz" > "$ARCHIVE_NAME.tar.gz.sha256"
