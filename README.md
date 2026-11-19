@@ -140,6 +140,31 @@ To remove pgex, use `apk del pgex`.
 
 </details>
 
+### Arch Linux
+
+The `pgex-bin` AUR package is being prepared; publication is waiting for AUR
+account registration to reopen. Once published, install it with an AUR helper:
+
+```sh
+yay -S pgex-bin
+```
+
+It uses our prebuilt x86-64 executable. To update, use `yay -Syu`.
+To remove pgex, use `sudo pacman -R pgex-bin`.
+
+Without an AUR helper, install with Arch's standard packaging tools:
+
+```sh
+sudo pacman -S --needed base-devel git
+git clone https://aur.archlinux.org/pgex-bin.git
+cd pgex-bin
+makepkg -si
+```
+
+For subsequent updates, run `git pull --ff-only && makepkg -si` in that directory.
+Until the AUR package is published, use the Linux x86-64 archive under
+[Download a release](#download-a-release), with `postgresql-libs` installed.
+
 ### Docker
 
 The image includes pgex and its runtime libraries, for Linux x86-64 and ARM64:

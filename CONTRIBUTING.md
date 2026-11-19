@@ -207,6 +207,25 @@ generic installer, dependency resolution, SQL diagnostics, upgrade from an older
 package, removal, and rejection of untrusted signatures in clean Alpine 3.24
 containers. Pushes use throwaway signing keys; publication uses the saved key.
 
+### Publish the Arch Linux AUR package
+
+[AUR package](.github/workflows/aur.yml) generates a `pgex-bin` recipe from a
+verified Linux x86-64 release archive. It uses Arch's `makepkg` as a non-root user,
+then tests installation, upgrade, SQL diagnostics, license files, and removal with
+`pacman`. The executable must match the release byte for byte. Changes to the
+recipe or workflow run these checks without publishing.
+
+Publishing requires an AUR account with an SSH key registered in its settings.
+Keep a backup of the private key in your password manager and add it to GitHub
+Actions as `AUR_SSH_PRIVATE_KEY`. This is an SSH authentication key for AUR, not a
+package-signing key. Create the initial `pgex-bin` AUR repository using that
+account, with only the tested `PKGBUILD` and `.SRCINFO` from the workflow artifact.
+
+After setup, successful stable releases automatically update AUR through the
+pinned `KSXGitHub/github-actions-deploy-aur` action. The workflow can also be run
+manually for an existing release. Older releases do not replace the latest AUR
+version; updates use normal Git pushes without rewriting AUR history.
+
 ### Publish Docker images
 
 The [Docker image workflow](.github/workflows/docker.yml) downloads and verifies

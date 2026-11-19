@@ -1,0 +1,22 @@
+# Maintainer: Tomer Sela <tomersela@gmail.com>
+pkgname=pgex-bin
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc='Export PostgreSQL data'
+arch=('x86_64')
+url='https://github.com/pg-herd/pgex'
+license=('MIT')
+depends=('glibc' 'gcc-libs' 'postgresql-libs' 'ca-certificates')
+provides=("pgex=$pkgver")
+conflicts=('pgex')
+options=('!strip' '!debug')
+source=("https://github.com/pg-herd/pgex/releases/download/v${pkgver}/pgex-v${pkgver}-x86_64-unknown-linux-gnu.tar.gz")
+sha256sums=('@SHA256@')
+
+package() {
+  local release="$srcdir/pgex-v$pkgver-x86_64-unknown-linux-gnu"
+  install -Dm755 "$release/pgex" "$pkgdir/usr/bin/pgex"
+  install -Dm644 "$release/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  cp -R "$release/licenses" "$pkgdir/usr/share/licenses/$pkgname/third-party"
+  install -Dm644 "$release/README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
+}
