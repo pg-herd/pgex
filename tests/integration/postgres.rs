@@ -65,7 +65,13 @@ impl PostgresTestDatabase {
             .await
             .context("Start the PostgreSQL test container (requires a running Docker engine)")?;
 
-        let host = container.get_host().await?;
+        // A test runner sharing the Docker host's network can use localhost,
+        // matching the fixture certificate instead of Docker's bridge address.
+        let host = match std::env::var("PGEX_TEST_HOST") {
+            Ok(host) => host,
+            Err(std::env::VarError::NotPresent) => container.get_host().await?.to_string(),
+            Err(error) => return Err(error.into()),
+        };
         let port = container.get_host_port_ipv4(POSTGRES_PORT.tcp()).await?;
         let mut certificate = container
             .exec(

@@ -41,7 +41,7 @@ PostgreSQL client library automatically. To update pgex later, run `brew update 
 
 ### Linux
 
-With `curl` installed, run:
+On Debian, Ubuntu, Fedora, and RHEL-compatible systems, with `curl` installed:
 
 ```sh
 curl -fsSL https://pg-herd.github.io/pgex/install.sh | sh
@@ -53,9 +53,10 @@ then arrive through your normal package manager.
 
 Installation is tested on Debian 12, Ubuntu 24.04, Fedora 45, and Rocky Linux 9,
 for x86-64 and ARM64. RPM packages also target RHEL-compatible systems version 9
-or newer, including RHEL, CentOS Stream, and AlmaLinux. Linux binaries require
-glibc 2.34 or newer. The installer reports unsupported distributions or
-architectures before changing package configuration.
+or newer, including RHEL, CentOS Stream, and AlmaLinux. APT and RPM packages require
+glibc 2.34 or newer. For Alpine Linux 3.24 or newer, use the musl archives under
+[Download a release](#download-a-release). The installer reports unsupported
+distributions or architectures before changing package configuration.
 
 <details>
 <summary>Manual APT setup (Debian and Ubuntu)</summary>
@@ -138,13 +139,17 @@ extract it, and put the `pgex` executable on your PATH.
 | Platform | Archive target | Required runtime packages |
 | --- | --- | --- |
 | macOS 15+ on Apple Silicon | `aarch64-apple-darwin` | Homebrew `libpq`: `brew install libpq`. |
-| Linux x86-64 | `x86_64-unknown-linux-gnu` | On Debian 12: `sudo apt-get install libgcc-s1 libpq5 ca-certificates`. |
-| Linux ARM64 | `aarch64-unknown-linux-gnu` | The same packages, for ARM64. |
+| Linux x86-64 (glibc) | `x86_64-unknown-linux-gnu` | On Debian 12: `sudo apt-get install libgcc-s1 libpq5 ca-certificates`. |
+| Linux ARM64 (glibc) | `aarch64-unknown-linux-gnu` | The same packages, for ARM64. |
+| Alpine 3.24+ x86-64 | `x86_64-unknown-linux-musl` | `apk add --no-cache libgcc libpq ca-certificates`. |
+| Alpine 3.24+ ARM64 | `aarch64-unknown-linux-musl` | The same packages, for ARM64. |
 
-Linux release binaries target glibc systems, with Debian 12 as the baseline.
+The GNU archives use Debian 12 as their baseline; the musl archives use Alpine 3.24.
 Each archive includes `runtime-dependencies.txt` and the third-party license files
 listed under [License](#license). To verify a download, place its
-`.sha256` file alongside it and run `shasum -a 256 -c <archive>.sha256`.
+`.sha256` file alongside it and run `sha256sum -c <archive>.sha256` on Linux,
+or `shasum -a 256 -c <archive>.sha256` on macOS. To upgrade a manual installation,
+repeat the download and verification steps and replace the installed executable.
 
 Run `pgex --help` to check the installation. For a source build, see
 [Building and contributing](CONTRIBUTING.md).

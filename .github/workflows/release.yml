@@ -21,9 +21,19 @@ jobs:
           - runner: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             platform: linux/amd64
+            dockerfile: release/linux.Dockerfile
           - runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             platform: linux/arm64
+            dockerfile: release/linux.Dockerfile
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            platform: linux/amd64
+            dockerfile: release/alpine/Dockerfile
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            platform: linux/arm64
+            dockerfile: release/alpine/Dockerfile
     runs-on: ${{ matrix.runner }}
     env:
       RUST_TARGET: ${{ matrix.target }}
@@ -52,8 +62,9 @@ jobs:
           toolchain=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])')
           rustup toolchain install "$toolchain" --profile minimal --target "$RUST_TARGET"
           brew install libpq
-          export PQ_LIB_DIR="$(brew --prefix libpq)/lib"
-          export LIBCLANG_PATH="$(dirname "$(xcrun --find clang)")/../lib"
+          PQ_LIB_DIR="$(brew --prefix libpq)/lib"
+          LIBCLANG_PATH="$(dirname "$(xcrun --find clang)")/../lib"
+          export PQ_LIB_DIR LIBCLANG_PATH
           cargo build --release --locked --target "$RUST_TARGET"
           mkdir -p release-output
           cp "target/$RUST_TARGET/release/pgex" release-output/
@@ -65,9 +76,26 @@ jobs:
         shell: bash
         env:
           DOCKER_PLATFORM: ${{ matrix.platform }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
         run: |
           docker buildx build --platform "$DOCKER_PLATFORM" \
-            --file release/linux.Dockerfile --output type=local,dest=release-output .
+            --file "$DOCKERFILE" --output type=local,dest=release-output .
+
+      - name: Run the full Alpine test suite and verify the release runtime
+        if: endsWith(matrix.target, '-musl')
+        shell: bash
+        env:
+          DOCKER_PLATFORM: ${{ matrix.platform }}
+        run: |
+          docker buildx build --platform "$DOCKER_PLATFORM" --file release/alpine/Dockerfile \
+            --target test --load --tag pgex-alpine-tests .
+          docker run --rm --network host \
+            --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
+            --env DOCKER_HOST=unix:///var/run/docker.sock --env PGEX_TEST_HOST=localhost \
+            pgex-alpine-tests
+          docker buildx build --platform "$DOCKER_PLATFORM" --file release/alpine/Dockerfile \
+            --target verify --load --tag pgex-alpine-runtime .
+          bash release/docker/test-image.sh pgex-alpine-runtime
 
       - name: Package the verified binary
         shell: bash

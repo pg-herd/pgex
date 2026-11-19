@@ -86,10 +86,19 @@ The [release workflow](.github/workflows/release.yml) builds these targets:
 | `aarch64-apple-darwin` | Apple Silicon macOS 15 runner. |
 | `x86_64-unknown-linux-gnu` | Native Linux x86-64 runner, Debian 12 builder image. |
 | `aarch64-unknown-linux-gnu` | Native Linux ARM64 runner, Debian 12 builder image. |
+| `x86_64-unknown-linux-musl` | Native Linux x86-64 runner, Alpine 3.24 builder image. |
+| `aarch64-unknown-linux-musl` | Native Linux ARM64 runner, Alpine 3.24 builder image. |
 
-All targets use the pinned Rust toolchain and `Cargo.lock`. Linux jobs use
+All targets use the pinned Rust toolchain and `Cargo.lock`. GNU Linux jobs use
 [release/linux.Dockerfile](release/linux.Dockerfile) and check the executable in a
-clean Debian 12 runtime image. The macOS job checks architecture and dynamic
+clean Debian 12 runtime image. Alpine jobs use
+[release/alpine/Dockerfile](release/alpine/Dockerfile), with dynamic musl linking
+(`RUSTFLAGS="-C target-feature=-crt-static"`) for both pgex and native build tools.
+They run the full Rust test suite, including rollback and exporter-disconnect
+tests, then check the release executable in a minimal Alpine runtime with verified
+TLS transfers and COPY rollback. The test runner shares the Linux Docker host's
+network and sets `PGEX_TEST_HOST=localhost` to match the fixture's TLS certificate.
+The macOS job checks architecture and dynamic
 library paths using [release/check-macos-linkage.sh](release/check-macos-linkage.sh),
 then runs the executable's help command.
 
@@ -102,8 +111,8 @@ has a SHA-256 file.
 To publish a release, update the Cargo package version and lockfile as needed,
 then push a matching `v<version>` tag. For example, package version `0.1.0`
 requires tag `v0.1.0`. The workflow publishes archives and checksums after all
-builds pass. When updating the Rust pin, also update the Rust image version in
-the Linux Dockerfile.
+builds pass. When updating the Rust pin, also update the Rust image versions in
+the GNU Linux and Alpine Dockerfiles.
 
 ### Update Homebrew
 
