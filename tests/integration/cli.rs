@@ -7,6 +7,38 @@ use tokio::process::Command;
 use super::postgres::PostgresTestDatabase;
 
 #[tokio::test]
+async fn cli_displays_help_without_connection_settings() -> Result<()> {
+    for (arguments, expected_code) in [(&[][..], 2), (&["-h"][..], 0), (&["--help"][..], 0)] {
+        let output = Command::new(env!("CARGO_BIN_EXE_pgex"))
+            .args(arguments)
+            .output()
+            .await?;
+        assert_eq!(output.status.code(), Some(expected_code), "{arguments:?}");
+        let (help, other) = if expected_code == 0 {
+            (&output.stdout, &output.stderr)
+        } else {
+            (&output.stderr, &output.stdout)
+        };
+        assert!(other.is_empty(), "{arguments:?}: {other:?}");
+        let help = String::from_utf8_lossy(help);
+        for expected in [
+            "Usage: pgex",
+            "--config",
+            "--source",
+            "--target",
+            "Examples:",
+            "pgex --config pgex.yml",
+            "PGEX_SOURCE_PASSWORD",
+            "PGEX_TARGET_PASSWORD",
+        ] {
+            assert!(help.contains(expected), "Missing {expected:?}: {help}");
+        }
+        assert!(!help.contains("Missing source.connection.url"), "{help}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn cli_and_yaml_users_take_precedence_on_each_connection() -> Result<()> {
     let (source, target) =
         tokio::try_join!(PostgresTestDatabase::start(), PostgresTestDatabase::start())?;

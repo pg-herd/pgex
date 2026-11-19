@@ -25,7 +25,16 @@ use pgex::{
 };
 
 #[derive(Parser)]
-#[command(about = "Refresh tables in a PostgreSQL destination")]
+#[command(
+    about = "Refresh tables in a PostgreSQL destination",
+    arg_required_else_help = true,
+    after_help = r#"Examples:
+  pgex --config pgex.yml
+  pgex --source postgresql://sync_user@source.example.com/app \
+       --target postgresql://sync_user@target.example.com/app
+
+Supply passwords through PGEX_SOURCE_PASSWORD and PGEX_TARGET_PASSWORD."#
+)]
 pub(crate) struct Cli {
     /// Read settings from a YAML file.
     #[arg(long, value_name = "PATH")]
