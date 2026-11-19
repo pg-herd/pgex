@@ -4,3 +4,8 @@
 !rust-toolchain.toml
 !src/
 !src/**
+!tests/
+!tests/**
+!LICENSE
+!licenses/
+!licenses/**

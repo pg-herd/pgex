@@ -9,6 +9,8 @@ use testcontainers::{
     runners::AsyncRunner,
 };
 
+mod native;
+
 const POSTGRES_PORT: u16 = 5432;
 const TLS_ENTRYPOINT: &str = r#"
 umask 077
@@ -23,15 +25,25 @@ exec docker-entrypoint.sh postgres -c ssl=on \
 "#;
 
 pub(super) struct PostgresTestDatabase {
-    container: ContainerAsync<GenericImage>,
+    backend: Backend,
     pub(super) connection_string: String,
     pub(super) password: String,
     pub(super) ca: NamedTempFile,
 }
 
+enum Backend {
+    Container(Box<ContainerAsync<GenericImage>>),
+    Native(native::NativePostgres),
+}
+
 impl PostgresTestDatabase {
     pub(super) async fn stderr(&self) -> Result<String> {
-        Ok(String::from_utf8(self.container.stderr_to_vec().await?)?)
+        match &self.backend {
+            Backend::Container(container) => {
+                Ok(String::from_utf8(container.stderr_to_vec().await?)?)
+            }
+            Backend::Native(database) => database.stderr().await,
+        }
     }
 
     pub(super) async fn connector(&self) -> Result<Connector> {
@@ -47,6 +59,10 @@ impl PostgresTestDatabase {
         let mut password_bytes = [0; 16];
         getrandom::fill(&mut password_bytes).map_err(|error| anyhow::anyhow!("{error}"))?;
         let password = format!("{:032x}", u128::from_be_bytes(password_bytes));
+
+        if let Some(bin) = std::env::var_os("PGEX_TEST_POSTGRES_BIN") {
+            return native::start(std::path::Path::new(&bin), password).await;
+        }
 
         let container = GenericImage::new("postgres", "17.11-bookworm")
             .with_exposed_port(POSTGRES_PORT.tcp())
@@ -83,7 +99,7 @@ impl PostgresTestDatabase {
         ca.write_all(&certificate.stdout_to_vec().await?)?;
 
         Ok(Self {
-            container,
+            backend: Backend::Container(Box::new(container)),
             connection_string: format!("postgresql://pgex_test@{host}:{port}/pgex_snapshot_test"),
             password,
             ca,

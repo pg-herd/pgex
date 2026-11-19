@@ -60,6 +60,29 @@ starts disposable PostgreSQL 17 instances, generates TLS certificates and
 passwords, and removes the containers afterward. The first run may pull the
 pinned `postgres:17.11-bookworm` image. No existing database is required.
 
+On macOS, the same tests can start disposable native PostgreSQL instances instead:
+
+```sh
+brew install postgresql@17
+PGEX_TEST_POSTGRES_BIN="$(brew --prefix postgresql@17)/bin" \
+  cargo test --locked -- --test-threads=2
+```
+
+This does not use a running PostgreSQL service. Each test initializes its own data
+directory, certificate, password, and port, and stops its server on cleanup. An
+invalid `PGEX_TEST_POSTGRES_BIN` fails the test; it does not fall back to Docker.
+`PGEX_TEST_BINARY` optionally selects the executable used by CLI integration
+tests, so release checks can exercise the optimized binary without compiling an
+optimized version of every test.
+
+The [CI workflow](.github/workflows/ci.yml) runs formatting, Clippy, and the full
+suite on Linux glibc AMD64 for pull requests and code changes on `main`.
+Documentation-only changes do not start the database suite. Superseded runs are
+cancelled, and dependency/build caches are separated by platform and toolchain.
+Changes to release builders, workflows, or database fixtures also run
+[Release checks](.github/workflows/release-checks.yml), which exercises the same
+five-target build/test matrix as a release, without publishing anything.
+
 For behavior changes and bug fixes, add a regression test at the relevant unit
 boundary. Small tests can live in an inline `#[cfg(test)] mod tests`. When setup
 is substantial, keep the production module and put its tests in a child file,
@@ -79,7 +102,8 @@ a performance improvement.
 
 ## Build release archives
 
-The [release workflow](.github/workflows/release.yml) builds these targets:
+The [release workflow](.github/workflows/release.yml) uses the shared
+[build/test workflow](.github/workflows/build.yml) for these targets:
 
 | Target | Builder |
 | --- | --- |
@@ -89,18 +113,26 @@ The [release workflow](.github/workflows/release.yml) builds these targets:
 | `x86_64-unknown-linux-musl` | Native Linux x86-64 runner, Alpine 3.24 builder image. |
 | `aarch64-unknown-linux-musl` | Native Linux ARM64 runner, Alpine 3.24 builder image. |
 
+All five targets run the full Rust suite using normal test builds before
+publication, including rollback and exporter-disconnect tests. Tests run natively
+on the corresponding architecture. The macOS runner uses temporary native
+PostgreSQL 17 instances; Linux test runners use disposable Docker databases.
+
 All targets use the pinned Rust toolchain and `Cargo.lock`. GNU Linux jobs use
 [release/linux.Dockerfile](release/linux.Dockerfile) and check the executable in a
 clean Debian 12 runtime image. Alpine jobs use
 [release/alpine/Dockerfile](release/alpine/Dockerfile), with dynamic musl linking
 (`RUSTFLAGS="-C target-feature=-crt-static"`) for both pgex and native build tools.
-They run the full Rust test suite, including rollback and exporter-disconnect
-tests, then check the release executable in a minimal Alpine runtime with verified
-TLS transfers and COPY rollback. The test runner shares the Linux Docker host's
+Both Linux builders expose a `test` stage and a minimal `verify` runtime. Each
+optimized executable is checked in that runtime with verified TLS transfers,
+parameter filtering, and COPY rollback. The binary in the runtime must match the
+one packaged for release. The test runner shares the Linux Docker host's
 network and sets `PGEX_TEST_HOST=localhost` to match the fixture's TLS certificate.
-The macOS job checks architecture and dynamic
-library paths using [release/check-macos-linkage.sh](release/check-macos-linkage.sh),
-then runs the executable's help command.
+The macOS job checks architecture and dynamic library paths using
+[release/check-macos-linkage.sh](release/check-macos-linkage.sh), then reruns CLI,
+parameter-filtered COPY, and exporter-timeout/rollback checks against the optimized
+executable. Cargo caches on macOS and BuildKit caches on Linux retain build work
+between runs, with separate caches for each target and toolchain.
 
 Run **Release binaries** manually in GitHub Actions to build and download verified
 artifacts without publishing a release. Archives contain the executable,

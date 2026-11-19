@@ -7,7 +7,8 @@ RUN apk add --no-cache build-base clang-dev pkgconf libpq-dev
 ENV RUSTFLAGS="-C target-feature=-crt-static" \
     PQ_LIB_DIR=/usr/lib \
     LIBCLANG_PATH=/usr/lib \
-    CARGO_BUILD_JOBS=3
+    CARGO_BUILD_JOBS=3 \
+    CARGO_INCREMENTAL=0
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY src/ src/
 RUN set -eu; \
@@ -23,8 +24,8 @@ RUN set -eu; \
 
 FROM build AS test
 COPY tests/ tests/
-RUN cargo test --release --locked --no-run
-CMD ["cargo", "test", "--release", "--locked", "--offline", "--", "--test-threads=2"]
+RUN cargo test --locked --no-run
+CMD ["cargo", "test", "--locked", "--offline", "--", "--test-threads=2"]
 
 FROM alpine:3.24 AS verify
 RUN apk add --no-cache ca-certificates libgcc libpq \

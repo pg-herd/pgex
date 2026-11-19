@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use pgex::connection::Client;
 use tokio::process::Command;
 
-use super::postgres::PostgresTestDatabase;
+use super::{postgres::PostgresTestDatabase, program::pgex_binary};
 
 #[tokio::test]
 async fn rolls_back_on_the_same_connection_after_copy_in_startup_fails() -> Result<()> {
@@ -665,7 +665,7 @@ fn sync_command(
     source_url: &str,
     target: &PostgresTestDatabase,
 ) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_pgex"));
+    let mut command = Command::new(pgex_binary());
     command
         .args([
             "--source",

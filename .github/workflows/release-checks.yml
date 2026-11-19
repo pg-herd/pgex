@@ -1,0 +1,28 @@
+name: Release checks
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/build.yml'
+      - '.github/workflows/release.yml'
+      - '.github/workflows/release-checks.yml'
+      - 'release/linux.Dockerfile*'
+      - 'release/alpine/**'
+      - 'release/check-macos-linkage.sh'
+      - 'release/docker/test-image.sh'
+      - 'tests/integration/postgres.rs'
+      - 'tests/integration/postgres/**'
+      - 'tests/integration/program.rs'
+      - 'rust-toolchain.toml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
