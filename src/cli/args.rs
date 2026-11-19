@@ -26,7 +26,7 @@ use pgex::{
 
 #[derive(Parser)]
 #[command(
-    about = "Refresh tables in a PostgreSQL destination",
+    about = "Export PostgreSQL data",
     arg_required_else_help = true,
     after_help = r#"Examples:
   pgex --config pgex.yml
@@ -51,7 +51,7 @@ pub(crate) struct Cli {
     #[arg(long, value_name = "NAME=VALUE", help_heading = "Selection")]
     param: Vec<String>,
 
-    /// PostgreSQL URL or libpq connection string.
+    /// PostgreSQL connection URL.
     #[arg(long, value_name = "URL", help_heading = "Source")]
     source: Option<String>,
 
@@ -86,7 +86,7 @@ pub(crate) struct Cli {
     #[arg(hide_short_help = true, long, value_name = "BOOL", hide_possible_values = true, help_heading = "Source", num_args = 0..=1, require_equals = true, default_missing_value = "true")]
     source_row_security_off: Option<bool>,
 
-    /// PostgreSQL URL or libpq connection string.
+    /// PostgreSQL connection URL.
     #[arg(long, value_name = "URL", help_heading = "Destination")]
     target: Option<String>,
 

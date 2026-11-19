@@ -5,7 +5,7 @@
   </picture>
 </h1>
 
-Refresh a PostgreSQL database with exactly the data you need.
+Export PostgreSQL data.
 
 Copy whole tables or select rows with SQL conditions. Save reusable settings in
 YAML, supply parameters from the command line, and copy multiple tables in

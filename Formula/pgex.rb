@@ -22,6 +22,6 @@ class Pgex < Formula
   end
 
   test do
-    assert_match "Refresh tables in a PostgreSQL destination", shell_output("#{bin}/pgex --help")
+    assert_match "Usage: pgex [OPTIONS]", shell_output("#{bin}/pgex --help")
   end
 end
