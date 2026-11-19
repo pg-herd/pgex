@@ -107,14 +107,18 @@ the Linux Dockerfile.
 
 ### Update Homebrew
 
-After publishing a release, update `Formula/pgex.rb` with its version, macOS
-archive URL, and SHA-256 from the release. Commit the formula to `main`; the tap
-reads it from this repository.
+Successful **Release binaries** runs automatically trigger the
+[Homebrew bottle workflow](.github/workflows/homebrew.yml). It verifies the macOS
+archive, prepares the formula, installs and tests the release, and publishes its
+Apple Silicon macOS 15 bottle. Homebrew generates the bottle block from the
+published metadata. The workflow then installs the published bottle and runs its
+test before committing the updated `Formula/pgex.rb` to `main`.
 
-Run the **Homebrew bottle** workflow to package the release for Homebrew. It
-installs and tests the existing binary on a GitHub runner, then uploads the bottle
-and its metadata to the release. Update the formula's `bottle` block with that
-metadata. Verify installation with `brew reinstall pgex` and `brew test pgex`.
+The workflow uses GitHub's built-in token; no additional secret is needed. It can
+also run manually for a published release using the optional `tag` input. Reruns
+preserve existing bottle assets, and an older release never replaces the latest
+stable version in the public formula. No manual checksum or formula edits are
+needed for a new release.
 
 ### Publish Linux packages and repositories
 

@@ -1,34 +1,84 @@
 name: Homebrew bottle
 
 on:
+  workflow_run:
+    workflows: ['Release binaries']
+    types: [completed]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Published release tag (empty means latest stable release)'
+        type: string
+        required: false
 
 permissions:
   contents: write
 
+concurrency:
+  group: homebrew-bottle
+  cancel-in-progress: false
+
 jobs:
   bottle:
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: macos-15
     env:
+      GH_TOKEN: ${{ github.token }}
       HOMEBREW_NO_AUTO_UPDATE: '1'
       HOMEBREW_NO_INSTALL_CLEANUP: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: main
           persist-credentials: false
+
+      - name: Resolve and verify the published release
+        id: release
+        env:
+          REQUESTED_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          tag=${REQUESTED_TAG:-${RELEASE_TAG:-}}
+          tag=$(gh release view ${tag:+"$tag"} --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease \
+            --jq 'if .isDraft or .isPrerelease then error("A published stable release is required") else empty end'
+          archive="pgex-$tag-aarch64-apple-darwin.tar.gz"
+          mkdir input
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern "$archive*" --dir input
+          (cd input && shasum -a 256 --check "$archive.sha256")
+          checksum=$(shasum -a 256 "input/$archive" | cut -d ' ' -f 1)
+          {
+            echo "tag=$tag"
+            echo "version=${tag#v}"
+            echo "checksum=$checksum"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Prepare the formula for this release
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+          CHECKSUM: ${{ steps.release.outputs.checksum }}
+        run: |
+          python3 -m unittest discover -s release/homebrew -p 'test_*.py'
+          brew tap pg-herd/pgex https://github.com/pg-herd/pgex
+          brew trust --formula pg-herd/pgex/pgex
+          formula="$(brew --repository pg-herd/pgex)/Formula/pgex.rb"
+          cp Formula/pgex.rb "$formula"
+          python3 release/homebrew/prepare_formula.py "$formula" "$TAG" "$CHECKSUM"
 
       - name: Install and test the release through Homebrew
         run: |
-          brew tap pg-herd/pgex https://github.com/pg-herd/pgex
-          brew trust --formula pg-herd/pgex/pgex
           brew install --build-bottle pg-herd/pgex/pgex
           brew test pg-herd/pgex/pgex
 
       - name: Package the Homebrew bottle
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
         run: |
-          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
+          mkdir bottle
+          cd bottle
           brew bottle --json --no-rebuild \
-            --root-url="https://github.com/pg-herd/pgex/releases/download/v$version" \
+            --root-url="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG" \
             pg-herd/pgex/pgex
           python3 - <<'PYTHON'
           import json
@@ -42,10 +92,73 @@ jobs:
                       source.rename(destination)
           PYTHON
 
-      - name: Publish the bottle on the existing release
+      - name: Publish the bottle without replacing existing release assets
         env:
-          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
         run: |
-          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
-          gh release upload "v$version" --repo "$GITHUB_REPOSITORY" --clobber \
-            -- *.bottle.tar.gz *.bottle.json
+          metadata="pgex--$VERSION.arm64_sequoia.bottle.json"
+          archive="pgex-$VERSION.arm64_sequoia.bottle.tar.gz"
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' > existing-assets
+          for asset in "$archive" "$metadata"; do
+            if ! grep -Fxq "$asset" existing-assets; then
+              gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" "bottle/$asset"
+            fi
+          done
+          mkdir published
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "$metadata" --pattern "$archive" --dir published
+          python3 - <<'PYTHON'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          metadata, = Path('published').glob('*.bottle.json')
+          package = json.loads(metadata.read_text())['pg-herd/pgex/pgex']
+          assert package['formula']['pkg_version'] == os.environ['VERSION'], package['formula']
+          bottle = package['bottle']
+          assert bottle['root_url'] == f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/{os.environ['TAG']}"
+          for entry in bottle['tags'].values():
+              archive = Path('published') / entry['filename']
+              assert hashlib.file_digest(archive.open('rb'), 'sha256').hexdigest() == entry['sha256'], archive
+          PYTHON
+
+      - name: Update the bottle block and test installation from the release
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          brew bottle --merge --write --no-commit published/*.bottle.json
+          brew uninstall pg-herd/pgex/pgex
+          brew install --force-bottle pg-herd/pgex/pgex
+          brew test pg-herd/pgex/pgex
+          brew info --json=v2 pg-herd/pgex/pgex > installed.json
+          python3 - <<'PYTHON'
+          import json
+          import os
+          installed, = json.load(open('installed.json'))['formulae'][0]['installed']
+          assert installed['poured_from_bottle'], installed
+          assert installed['version'] == os.environ['VERSION'], installed
+          PYTHON
+          cp "$(brew --repository pg-herd/pgex)/Formula/pgex.rb" Formula/pgex.rb
+
+      - name: Update the public formula for the latest stable release
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          latest=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          if [[ "$TAG" != "$latest" ]]; then
+            echo "Bottle published; leaving the formula on the latest stable release."
+            exit 0
+          fi
+          git add Formula/pgex.rb
+          if git diff --cached --quiet; then
+            echo 'The public formula is already up to date.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m "Update Homebrew formula to $VERSION"
+          gh auth setup-git
+          git pull --rebase origin main
+          git push origin HEAD:main
