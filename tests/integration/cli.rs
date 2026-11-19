@@ -4,15 +4,12 @@ use std::path::Path;
 use anyhow::Result;
 use tokio::process::Command;
 
-use super::postgres::PostgresTestDatabase;
+use super::{postgres::PostgresTestDatabase, program::pgex_binary};
 
 #[tokio::test]
 async fn cli_displays_help_without_connection_settings() -> Result<()> {
     for (arguments, expected_code) in [(&[][..], 2), (&["-h"][..], 0), (&["--help"][..], 0)] {
-        let output = Command::new(env!("CARGO_BIN_EXE_pgex"))
-            .args(arguments)
-            .output()
-            .await?;
+        let output = Command::new(pgex_binary()).args(arguments).output().await?;
         assert_eq!(output.status.code(), Some(expected_code), "{arguments:?}");
         let (help, other) = if expected_code == 0 {
             (&output.stdout, &output.stderr)
@@ -260,7 +257,7 @@ fn config_command(
     source: &PostgresTestDatabase,
     target: &PostgresTestDatabase,
 ) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_pgex"));
+    let mut command = Command::new(pgex_binary());
     command
         .arg("--config")
         .arg(path)
@@ -283,7 +280,7 @@ async fn cli_validates_destination_layouts_and_reports_mismatches() -> Result<()
     target_session.client().batch_execute(layout).await?;
 
     let run = || {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_pgex"));
+        let mut command = Command::new(pgex_binary());
         command
             .arg("--source")
             .arg(&source.connection_string)
@@ -377,7 +374,7 @@ async fn cli_validates_destination_layouts_and_reports_mismatches() -> Result<()
 
 #[tokio::test]
 async fn cli_rejects_a_missing_destination() -> Result<()> {
-    let output = Command::new(env!("CARGO_BIN_EXE_pgex"))
+    let output = Command::new(pgex_binary())
         .args(["--source", "dbname=source"])
         .output()
         .await?;
@@ -398,7 +395,7 @@ async fn cli_reports_when_a_selected_relation_has_no_table_layout() -> Result<()
         .await?;
     session.close().await;
 
-    let output = Command::new(env!("CARGO_BIN_EXE_pgex"))
+    let output = Command::new(pgex_binary())
         .arg("--source")
         .arg(&database.connection_string)
         .arg("--ca")
@@ -421,7 +418,7 @@ async fn cli_reports_when_a_selected_relation_has_no_table_layout() -> Result<()
 #[tokio::test]
 async fn cli_names_the_supplied_table_when_its_schema_is_missing() -> Result<()> {
     let database = PostgresTestDatabase::start().await?;
-    let output = Command::new(env!("CARGO_BIN_EXE_pgex"))
+    let output = Command::new(pgex_binary())
         .arg("--source")
         .arg(&database.connection_string)
         .arg("--ca")
@@ -464,7 +461,7 @@ async fn omitted_table_list_locks_discovered_tables_but_explicit_list_only_locks
         database.connection_string
     );
     let run = || {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_pgex"));
+        let mut command = Command::new(pgex_binary());
         command
             .arg("--source")
             .arg(&connection_string)
@@ -499,7 +496,7 @@ async fn omitted_table_list_locks_discovered_tables_but_explicit_list_only_locks
 #[tokio::test]
 async fn ambient_pgpassword_does_not_replace_missing_pgex_credentials() -> Result<()> {
     let database = PostgresTestDatabase::start().await?;
-    let output = Command::new(env!("CARGO_BIN_EXE_pgex"))
+    let output = Command::new(pgex_binary())
         .args([
             "--source",
             &database.connection_string,

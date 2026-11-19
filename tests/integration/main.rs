@@ -2,6 +2,7 @@ mod catalog;
 mod cli;
 mod connection;
 mod postgres;
+mod program;
 mod snapshot;
 mod table_locking;
 mod target_transfer;
