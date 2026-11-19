@@ -1,4 +1,9 @@
-# pgex
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/pgex-logo-dark.svg">
+    <img src="assets/pgex-logo.svg" alt="pgex">
+  </picture>
+</h1>
 
 Refresh a PostgreSQL database with exactly the data you need.
 
@@ -92,7 +97,7 @@ DNF verifies both the repository metadata and the packages. To update, use
 The image includes pgex and its runtime libraries, for Linux x86-64 and ARM64:
 
 ```sh
-docker run --rm ghcr.io/pg-herd/pgex:0.1.0 --help
+docker run --rm ghcr.io/pg-herd/pgex:latest --help
 ```
 
 To use `pgex.yml` and any private CA files in your current directory, with the
@@ -105,7 +110,7 @@ docker run --rm \
   --workdir /config \
   --env PGEX_SOURCE_PASSWORD \
   --env PGEX_TARGET_PASSWORD \
-  ghcr.io/pg-herd/pgex:0.1.0 --config pgex.yml
+  ghcr.io/pg-herd/pgex:latest --config pgex.yml
 ```
 
 This Linux/macOS shell example uses your user ID so pgex can read private config
@@ -115,8 +120,15 @@ For databases on a Docker network, add `--network NETWORK` and use their service
 names as hostnames.
 
 The image runs as the non-root `pgex` user by default. All normal pgex flags are
-available after the image name. Use a version tag to pin the pgex release;
-`ghcr.io/pg-herd/pgex:latest` follows the latest stable release.
+available after the image name. The `latest` tag follows the latest stable release.
+To upgrade, pull the updated image, then repeat your `docker run` command:
+
+```sh
+docker pull ghcr.io/pg-herd/pgex:latest
+```
+
+To pin a specific release, replace `latest` with a version tag such as `0.1.1`.
+To upgrade a pinned release, change that tag to the desired version.
 
 ### Download a release
 
