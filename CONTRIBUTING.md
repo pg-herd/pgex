@@ -152,3 +152,34 @@ never generated automatically by CI.
 It checks the architecture, glibc version, and distribution support before
 changing package configuration. It supports root and sudo and installs only from
 the signed repositories. Unsupported systems exit with a clear message.
+
+### Publish Docker images
+
+The [Docker image workflow](.github/workflows/docker.yml) downloads and verifies
+an existing published Linux release, then builds a Debian-based runtime image on
+native x86-64 and ARM64 runners. It checks that the executable is unchanged and
+tests non-root/read-only operation, private YAML mounts, verified TLS, parameter
+filtering, row refresh, and rollback against a disposable PostgreSQL instance.
+
+The workflow publishes to `ghcr.io/pg-herd/pgex` using GitHub's built-in
+`GITHUB_TOKEN` with `packages: write`; no registry password secret is needed.
+On the first publication, make the container package **Public** in its GitHub
+package settings so anonymous pulls work. The image is linked to this repository
+through its OCI source label.
+
+Run **Docker image** manually to publish an existing release; the optional `tag`
+input defaults to the latest stable release. Successful **Release binaries** runs
+also trigger it. After both architecture tests pass, the workflow publishes a
+combined version tag such as `0.1.0`. It updates `latest` only when publishing the
+current latest stable GitHub release. Architecture-specific tags such as
+`0.1.0-amd64` and `0.1.0-arm64` are also available. Image labels identify the version
+and the release's source commit. The runtime image includes `LICENSE` and the
+third-party notices under `/usr/share/doc/pgex/`.
+
+For a local image build, extract the appropriate release archive to `input/`:
+
+```sh
+docker build -f release/docker/Dockerfile -t pgex:test \
+  --build-arg VERSION=0.1.0 --build-arg REVISION="$(git rev-parse 'v0.1.0^{commit}')" input
+bash release/docker/test-image.sh pgex:test
+```

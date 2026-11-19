@@ -87,6 +87,37 @@ DNF verifies both the repository metadata and the packages. To update, use
 
 </details>
 
+### Docker
+
+The image includes pgex and its runtime libraries, for Linux x86-64 and ARM64:
+
+```sh
+docker run --rm ghcr.io/pg-herd/pgex:0.1.0 --help
+```
+
+To use `pgex.yml` and any private CA files in your current directory, with the
+password environment variables exported as in [Quick start](#quick-start):
+
+```sh
+docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  --mount "type=bind,src=$PWD,dst=/config,readonly" \
+  --workdir /config \
+  --env PGEX_SOURCE_PASSWORD \
+  --env PGEX_TARGET_PASSWORD \
+  ghcr.io/pg-herd/pgex:0.1.0 --config pgex.yml
+```
+
+This Linux/macOS shell example uses your user ID so pgex can read private config
+files without changing their permissions. Specify database usernames in the YAML
+or connection URLs. CA file paths must refer to files inside the container.
+For databases on a Docker network, add `--network NETWORK` and use their service
+names as hostnames.
+
+The image runs as the non-root `pgex` user by default. All normal pgex flags are
+available after the image name. Use a version tag to pin the pgex release;
+`ghcr.io/pg-herd/pgex:latest` follows the latest stable release.
+
 ### Download a release
 
 Download the archive matching your platform from [GitHub Releases](https://github.com/pg-herd/pgex/releases),

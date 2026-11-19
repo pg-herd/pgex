@@ -1,0 +1,150 @@
+name: Docker image
+
+on:
+  workflow_run:
+    workflows: ['Release binaries']
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Published release tag (empty means latest stable release)'
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-image
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      revision: ${{ steps.release.outputs.revision }}
+      latest: ${{ steps.release.outputs.latest }}
+    steps:
+      - name: Resolve the published release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_TAG: ${{ inputs.tag }}
+        run: |
+          latest=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          tag=${REQUESTED_TAG:-$latest}
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease \
+            --jq 'if .isDraft or .isPrerelease then error("A published stable release is required") else empty end'
+          revision=$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq .sha)
+          {
+            echo "tag=$tag"
+            echo "version=${tag#v}"
+            echo "revision=$revision"
+            if [[ "$tag" == "$latest" ]]; then echo 'latest=true'; else echo 'latest=false'; fi
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: release
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            architecture: amd64
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            architecture: arm64
+            target: aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download and verify the released executable
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release.outputs.tag }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          archive="pgex-$TAG-$TARGET.tar.gz"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$archive*"
+          sha256sum --check "$archive.sha256"
+          mkdir input
+          tar -xzf "$archive" --strip-components=1 -C input
+      - name: Build the runtime image
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+          REVISION: ${{ needs.release.outputs.revision }}
+        run: |
+          docker build --file release/docker/Dockerfile --tag pgex-image:test \
+            --build-arg "VERSION=$VERSION" --build-arg "REVISION=$REVISION" input
+          docker run --rm --entrypoint /bin/cat pgex-image:test /usr/local/bin/pgex > packaged-pgex
+          cmp input/pgex packaged-pgex
+      - name: Test the image against PostgreSQL over verified TLS
+        run: bash release/docker/test-image.sh pgex-image:test
+      - name: Publish the tested architecture image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.release.outputs.version }}
+          ARCHITECTURE: ${{ matrix.architecture }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker tag pgex-image:test "$image:$VERSION-$ARCHITECTURE"
+          docker push "$image:$VERSION-$ARCHITECTURE"
+          reference=$(docker image inspect --format '{{index .RepoDigests 0}}' "$image:$VERSION-$ARCHITECTURE")
+          [[ "$reference" == "$image@sha256:"* ]]
+          mkdir digests
+          printf '%s\n' "$reference" > "digests/$ARCHITECTURE"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: digest-${{ matrix.architecture }}
+          path: digests/*
+          retention-days: 1
+          if-no-files-found: error
+
+  publish:
+    needs: [release, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: digest-*
+          path: digests
+          merge-multiple: true
+      - name: Publish and verify the multi-platform image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.release.outputs.version }}
+          PUBLISH_LATEST: ${{ needs.release.outputs.latest }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          references=()
+          for architecture in amd64 arm64; do
+            reference=$(cat "digests/$architecture")
+            [[ "$reference" == "$image@sha256:"* ]]
+            references+=("$reference")
+          done
+          docker buildx imagetools create --tag "$image:$VERSION" "${references[@]}"
+          docker buildx imagetools inspect --raw "$image:$VERSION" > manifest.json
+          python3 - <<'PY'
+          import json
+          manifests = json.load(open('manifest.json'))['manifests']
+          manifests = [m for m in manifests if m.get('annotations', {}).get('vnd.docker.reference.type') != 'attestation-manifest']
+          platforms = {(m['platform']['os'], m['platform']['architecture']) for m in manifests}
+          assert platforms == {('linux', 'amd64'), ('linux', 'arm64')}, platforms
+          PY
+          if [[ "$PUBLISH_LATEST" == true ]]; then
+            docker buildx imagetools create --tag "$image:latest" "$image:$VERSION"
+          fi
