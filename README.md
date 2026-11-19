@@ -71,21 +71,20 @@ PostgreSQL client library automatically. To update pgex later, run `brew update 
 
 ### Linux
 
-On Debian, Ubuntu, Fedora, and RHEL-compatible systems, with `curl` installed:
+On Debian, Ubuntu, Fedora, Alpine, and RHEL-compatible systems, with `curl` installed:
 
 ```sh
 curl -fsSL https://pg-herd.github.io/pgex/install.sh | sh
 ```
 
-The installer detects your distribution, adds the signed APT or RPM repository,
+The installer detects your distribution, adds the signed APT, RPM, or APK repository,
 and installs pgex and its runtime libraries. It uses `sudo` when needed. Updates
 then arrive through your normal package manager.
 
-Installation is tested on Debian 12, Ubuntu 24.04, Fedora 45, and Rocky Linux 9,
+Installation is tested on Debian 12, Ubuntu 24.04, Fedora 45, Rocky Linux 9, and Alpine 3.24,
 for x86-64 and ARM64. RPM packages also target RHEL-compatible systems version 9
 or newer, including RHEL, CentOS Stream, and AlmaLinux. APT and RPM packages require
-glibc 2.34 or newer. For Alpine Linux 3.24 or newer, use the musl archives under
-[Download a release](#download-a-release). The installer reports unsupported
+glibc 2.34 or newer. APK packages require Alpine Linux 3.24 or newer. The installer reports unsupported
 distributions or architectures before changing package configuration.
 
 <details>
@@ -120,6 +119,24 @@ sudo dnf install pgex
 
 DNF verifies both the repository metadata and the packages. To update, use
 `sudo dnf upgrade pgex`. To remove pgex, use `sudo dnf remove pgex`.
+
+</details>
+
+<details>
+<summary>Manual APK setup (Alpine)</summary>
+
+As root, add the repository and its signing key once:
+
+```sh
+apk add --no-cache ca-certificates curl
+curl -fsSLo /etc/apk/keys/pgex.rsa.pub https://pg-herd.github.io/pgex/apk/pgex.rsa.pub
+echo 'https://pg-herd.github.io/pgex/apk' >> /etc/apk/repositories
+apk add --update-cache pgex
+```
+
+Packages are available for x86-64 and ARM64. APK verifies the repository and
+package signatures. To update, use `apk upgrade --update-cache pgex`.
+To remove pgex, use `apk del pgex`.
 
 </details>
 

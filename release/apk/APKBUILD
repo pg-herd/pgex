@@ -1,0 +1,17 @@
+# Maintainer: Tomer Sela <tomersela@gmail.com>
+pkgname=pgex
+pkgver=${PACKAGE_VERSION:?Set PACKAGE_VERSION}
+pkgrel=0
+pkgdesc="Export PostgreSQL data"
+url="https://github.com/pg-herd/pgex"
+arch="x86_64 aarch64"
+license="MIT"
+depends="ca-certificates"
+options="!check !strip"
+
+package() {
+	install -Dm755 "$RELEASE_INPUT/pgex" "$pkgdir/usr/bin/pgex"
+	install -Dm644 "$RELEASE_INPUT/LICENSE" "$pkgdir/usr/share/doc/pgex/LICENSE"
+	install -m644 "$RELEASE_INPUT/README.md" "$pkgdir/usr/share/doc/pgex/README.md"
+	cp -R "$RELEASE_INPUT/licenses" "$pkgdir/usr/share/doc/pgex/licenses"
+}

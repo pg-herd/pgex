@@ -175,11 +175,14 @@ One-time setup:
 1. In the repository's **Settings → Pages**, select **GitHub Actions** as the source.
 2. Add the repository Actions secrets `APT_SIGNING_KEY` (the exported, encrypted
    private key) and `APT_SIGNING_PASSPHRASE` (its passphrase). These existing
-   secrets sign both APT and RPM; no second signing key is needed.
+   secrets sign both APT and RPM.
 3. Keep a password-manager backup of both. GitHub's settings do not reveal secret
    values after they are saved. The shared public key is tracked at
    [release/pgex.asc](release/pgex.asc); publishing checks that it matches the
    private signing key.
+4. Add `APK_SIGNING_KEY`, the PEM RSA private key for Alpine packages. Its public
+   half is tracked at [release/apk/pgex.rsa.pub](release/apk/pgex.rsa.pub).
+   Keep a password-manager backup; publishing checks the key pair matches.
 
 Run **Linux packages** manually to publish an existing release; the optional
 `tag` input defaults to the latest stable release. Successful **Release binaries**
@@ -187,16 +190,22 @@ runs trigger it automatically for future releases. Pushes to package tooling run
 tests without publishing.
 
 The workflow signs new RPM packages before uploading them to their GitHub release.
-Existing release assets remain unchanged. It collects all published Debian and RPM
-packages, signs both repositories, and deploys `apt/`, `rpm/`, and `install.sh`
-together to GitHub Pages. APT indexes, RPM metadata, and individual RPM packages
+Existing release assets remain unchanged. It collects all published Debian, RPM,
+and APK packages and deploys `apt/`, `rpm/`, `apk/`, and `install.sh`
+together to GitHub Pages. APT indexes, RPM metadata, APK indexes, and RPM/APK packages
 are signed. Production keys remain in the runner's temporary directory and are
 never generated automatically by CI.
 
-[release/install.sh](release/install.sh) selects APT or DNF from `/etc/os-release`.
-It checks the architecture, glibc version, and distribution support before
+[release/install.sh](release/install.sh) selects APT, DNF, or APK from `/etc/os-release`.
+It checks the architecture, distribution support, and glibc version where applicable before
 changing package configuration. It supports root and sudo and installs only from
 the signed repositories. Unsupported systems exit with a clear message.
+
+APK packaging uses the existing musl release binaries without recompiling or
+modifying them. Native x86-64 and ARM64 jobs build signed packages and test the
+generic installer, dependency resolution, SQL diagnostics, upgrade from an older
+package, removal, and rejection of untrusted signatures in clean Alpine 3.24
+containers. Pushes use throwaway signing keys; publication uses the saved key.
 
 ### Publish Docker images
 

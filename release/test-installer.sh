@@ -30,6 +30,8 @@ export PATH="$work/bin:$original_path"
 refuse 'pgex supports x86-64 and ARM64.'
 rm "$work/bin/uname"
 printf 'ID=alpine\nVERSION_ID=3.23\n' > /etc/os-release
+refuse 'APK installation requires Alpine 3.24 or newer.'
+printf 'ID=unsupported\nVERSION_ID=1\n' > /etc/os-release
 refuse 'Supported distributions:'
 printf 'ID=rocky\nVERSION_ID=8.10\n' > /etc/os-release
 refuse 'RPM installation requires RHEL-compatible version 9 or newer.'

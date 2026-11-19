@@ -18,20 +18,31 @@ main() {
   case "${ID:-}" in
     debian|ubuntu) manager=apt ;;
     fedora) manager=dnf ;;
+    alpine)
+      distribution_version=${VERSION_ID:-0}
+      major=${distribution_version%%.*}
+      minor=${distribution_version#*.}
+      minor=${minor%%.*}
+      if [ "$major" -lt 3 ] || { [ "$major" -eq 3 ] && [ "$minor" -lt 24 ]; }; then
+        fail 'APK installation requires Alpine 3.24 or newer.'
+      fi
+      manager=apk ;;
     rhel|centos|rocky|almalinux)
       distribution_version=${VERSION_ID:-0}
       [ "${distribution_version%%.*}" -ge 9 ] || fail 'RPM installation requires RHEL-compatible version 9 or newer.'
       manager=dnf ;;
-    *) fail 'Supported distributions: Debian, Ubuntu, Fedora, and RHEL-compatible systems (RHEL, CentOS Stream, Rocky, AlmaLinux) version 9 or newer.' ;;
+    *) fail 'Supported distributions: Debian, Ubuntu, Fedora, Alpine 3.24+, and RHEL-compatible systems (RHEL, CentOS Stream, Rocky, AlmaLinux) version 9 or newer.' ;;
   esac
   [ ! -e /run/ostree-booted ] || fail 'Immutable OSTree systems are not supported by this installer.'
-  libc=$(getconf GNU_LIBC_VERSION 2>/dev/null) || fail 'pgex requires glibc 2.34 or newer.'
-  libc=${libc#glibc }
-  major=${libc%%.*}
-  minor=${libc#*.}
-  minor=${minor%%.*}
-  if [ "$major" -lt 2 ] || { [ "$major" -eq 2 ] && [ "$minor" -lt 34 ]; }; then
-    fail 'pgex requires glibc 2.34 or newer. Upgrade your distribution first.'
+  if [ "$manager" != apk ]; then
+    libc=$(getconf GNU_LIBC_VERSION 2>/dev/null) || fail 'pgex requires glibc 2.34 or newer.'
+    libc=${libc#glibc }
+    major=${libc%%.*}
+    minor=${libc#*.}
+    minor=${minor%%.*}
+    if [ "$major" -lt 2 ] || { [ "$major" -eq 2 ] && [ "$minor" -lt 34 ]; }; then
+      fail 'pgex requires glibc 2.34 or newer. Upgrade your distribution first.'
+    fi
   fi
   command -v curl >/dev/null 2>&1 || fail 'Install curl, then run this installer again.'
   if [ "$(id -u)" -eq 0 ]; then
@@ -65,6 +76,17 @@ main() {
       $privilege install -d -m0755 /etc/yum.repos.d
       $privilege install -m0644 "$temporary/pgex.repo" /etc/yum.repos.d/pgex.repo
       $privilege dnf install -y pgex
+      ;;
+    apk)
+      command -v apk >/dev/null 2>&1 || fail 'APK is not available on this system.'
+      $privilege apk add --no-cache ca-certificates
+      curl -fsSL "$base/apk/pgex.rsa.pub" -o "$temporary/pgex.rsa.pub"
+      $privilege install -d -m0755 /etc/apk/keys
+      $privilege install -m0644 "$temporary/pgex.rsa.pub" /etc/apk/keys/pgex.rsa.pub
+      if ! grep -Fxq "$base/apk" /etc/apk/repositories; then
+        printf '%s\n' "$base/apk" | $privilege tee -a /etc/apk/repositories >/dev/null
+      fi
+      $privilege apk add --update-cache pgex
       ;;
   esac
   pgex --help >/dev/null

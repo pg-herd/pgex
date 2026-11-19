@@ -7,6 +7,7 @@ on:
       - '.github/workflows/linux-packages.yml'
       - 'release/apt/**'
       - 'release/rpm/**'
+      - 'release/apk/**'
       - 'release/install.sh'
       - 'release/test-installer.sh'
   workflow_run:
@@ -201,9 +202,97 @@ jobs:
           docker run --rm --mount type=bind,src="$PWD",dst=/work,readonly debian:bookworm-slim \
             bash /work/release/test-installer.sh /work/release/install.sh
 
+  apk:
+    needs: release
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            architecture: x86_64
+            target: x86_64-unknown-linux-musl
+          - runner: ubuntu-24.04-arm
+            architecture: aarch64
+            target: aarch64-unknown-linux-musl
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download and verify the released Alpine binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release.outputs.tag }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          archive="pgex-$TAG-$TARGET.tar.gz"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$archive*"
+          sha256sum --check "$archive.sha256"
+          mkdir input
+          tar -xzf "$archive" --strip-components=1 -C input
+      - name: Prepare the APK signing key
+        env:
+          APK_SIGNING_KEY: ${{ secrets.APK_SIGNING_KEY }}
+        run: |
+          mkdir -m700 "$RUNNER_TEMP/apk-key"
+          umask 077
+          key="$RUNNER_TEMP/apk-key/pgex.rsa"
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+            openssl genrsa -out "$key" 3072
+          else
+            [[ -n "$APK_SIGNING_KEY" ]] || { echo 'APK_SIGNING_KEY is missing.' >&2; exit 1; }
+            printf '%s\n' "$APK_SIGNING_KEY" > "$key"
+            openssl rsa -in "$key" -pubout -out "$key.pub"
+            cmp release/apk/pgex.rsa.pub "$key.pub"
+          fi
+      - name: Build and sign APK packages and a test repository
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+          ARCHITECTURE: ${{ matrix.architecture }}
+        run: |
+          docker build --tag pgex-apk-builder release/apk
+          mkdir packages previous
+          for kind in packages previous; do
+            version="$VERSION"
+            if [[ "$kind" == previous ]]; then version="${VERSION}_alpha1"; fi
+            docker run --rm --mount type=bind,src="$PWD",dst=/work \
+              --mount type=bind,src="$RUNNER_TEMP/apk-key",dst=/keys,readonly \
+              --env PACKAGER_PRIVKEY=/keys/pgex.rsa pgex-apk-builder \
+              /work/release/apk/build-package.sh /work/input "$version" "$ARCHITECTURE" "/work/$kind"
+          done
+          docker run --rm --mount type=bind,src="$PWD",dst=/work \
+            --mount type=bind,src="$RUNNER_TEMP/apk-key",dst=/keys,readonly pgex-apk-builder \
+            /work/release/apk/build-repository.sh /work/packages /work/repository/apk /keys/pgex.rsa
+          docker run --rm --mount type=bind,src="$PWD",dst=/work \
+            --mount type=bind,src="$RUNNER_TEMP/apk-key",dst=/keys,readonly pgex-apk-builder \
+            /work/release/apk/build-repository.sh /work/previous /work/repository/apk-previous /keys/pgex.rsa
+      - name: Test APK installer, upgrade, removal, and signatures
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+          ARCHITECTURE: ${{ matrix.architecture }}
+        run: |
+          sed 's|https://pg-herd.github.io/pgex|http://127.0.0.1:8000|g' release/install.sh > installer.sh
+          python3 -m http.server 8000 --directory repository > "$RUNNER_TEMP/apk-http.log" 2>&1 &
+          server=$!
+          trap 'kill "$server"' EXIT
+          curl --retry 5 --retry-connrefused --retry-delay 1 --fail --silent http://127.0.0.1:8000/apk/pgex.rsa.pub >/dev/null
+          docker run --rm --network host --mount type=bind,src="$PWD",dst=/work,readonly alpine:3.24 \
+            sh -ec 'apk add --no-cache bash; exec bash "$@"' sh \
+            /work/release/apk/test-install.sh http://127.0.0.1:8000/apk /work/repository/apk/pgex.rsa.pub \
+            "$VERSION" http://127.0.0.1:8000/apk-previous /work/installer.sh
+      - name: Remove the temporary signing key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/apk-key"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: package-apk-${{ matrix.architecture }}
+          path: |
+            packages/*
+            previous/*
+          if-no-files-found: error
+
   publish:
     if: github.event_name != 'push'
-    needs: [release, test]
+    needs: [release, test, apk]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -235,26 +324,37 @@ jobs:
           key=$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1 == "fpr" {print $10; exit}')
           [[ "$key" == "$expected" ]] || { echo 'Signing key does not match the published public key.' >&2; exit 1; }
           release/rpm/sign-packages.sh artifacts/packages "$key"
+      - name: Prepare the APK repository signer
+        env:
+          APK_SIGNING_KEY: ${{ secrets.APK_SIGNING_KEY }}
+        run: |
+          [[ -n "$APK_SIGNING_KEY" ]] || { echo 'APK_SIGNING_KEY is missing.' >&2; exit 1; }
+          mkdir -m700 "$RUNNER_TEMP/apk-key"
+          umask 077
+          printf '%s\n' "$APK_SIGNING_KEY" > "$RUNNER_TEMP/apk-key/pgex.rsa"
+          openssl rsa -in "$RUNNER_TEMP/apk-key/pgex.rsa" -pubout -out "$RUNNER_TEMP/apk-key/pgex.rsa.pub"
+          cmp release/apk/pgex.rsa.pub "$RUNNER_TEMP/apk-key/pgex.rsa.pub"
+          docker build --tag pgex-apk-builder release/apk
       - name: Publish new packages and collect existing releases
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.release.outputs.tag }}
         run: |
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' > existing-assets
-          for package in artifacts/packages/*.deb artifacts/packages/*.rpm; do
+          for package in artifacts/packages/*.deb artifacts/packages/*.rpm artifacts/packages/*.apk; do
             if ! grep -Fxq "$(basename "$package")" existing-assets; then
               gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" "$package"
             fi
           done
-          mkdir -p repository-packages/deb repository-packages/rpm
+          mkdir -p repository-packages/deb repository-packages/rpm repository-packages/apk
           gh api --paginate "repos/$GITHUB_REPOSITORY/releases" \
-            --jq '.[] | select(.draft == false and .prerelease == false) | .assets[] | select((.name | endswith(".deb")) or (.name | endswith(".rpm"))) | .browser_download_url' \
+            --jq '.[] | select(.draft == false and .prerelease == false) | .assets[] | select((.name | endswith(".deb")) or (.name | endswith(".rpm")) or (.name | endswith(".apk"))) | .browser_download_url' \
             > package-urls
           while IFS= read -r url; do
-            case "$url" in *.deb) format=deb ;; *.rpm) format=rpm ;; *) exit 1 ;; esac
+            case "$url" in *.deb) format=deb ;; *.rpm) format=rpm ;; *.apk) format=apk ;; *) exit 1 ;; esac
             curl --fail --location --silent --show-error "$url" --output "repository-packages/$format/${url##*/}"
           done < package-urls
-      - name: Sign and assemble both repositories and the installer
+      - name: Sign and assemble the repositories and installer
         env:
           GNUPGHOME: ${{ runner.temp }}/package-gnupg
           APT_SIGNING_PASSPHRASE: ${{ secrets.APT_SIGNING_PASSPHRASE }}
@@ -262,8 +362,14 @@ jobs:
           key=$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1 == "fpr" {print $10; exit}')
           release/apt/build-repository.sh repository-packages/deb site/apt "$key"
           release/rpm/build-repository.sh repository-packages/rpm site/rpm "$key"
+          docker run --rm --mount type=bind,src="$PWD",dst=/work \
+            --mount type=bind,src="$RUNNER_TEMP/apk-key",dst=/keys,readonly pgex-apk-builder \
+            /work/release/apk/build-repository.sh /work/repository-packages/apk /work/site/apk /keys/pgex.rsa
           install -m644 release/install.sh site/install.sh
           touch site/.nojekyll
+      - name: Remove the temporary APK signing key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/apk-key"
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
