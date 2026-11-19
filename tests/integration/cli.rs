@@ -33,18 +33,30 @@ async fn cli_displays_help_without_connection_settings() -> Result<()> {
             "Selection:",
             "Source:",
             "Destination:",
-            "Transfers:",
-            "Snapshot:",
-            "Timeouts:",
-            "--source <URL>\n",
-            "--target <URL>\n",
-            "--source-exporter-transaction-timeout-ms <MS>\n",
+            "Run pgex --help to see all options.",
         ] {
             assert!(help.contains(expected), "Missing {expected:?}: {help}");
         }
         assert!(!help.contains("Missing source.connection.url"), "{help}");
         for line in help.lines() {
             assert!(line.len() <= 80, "Help exceeds 80 columns: {line}");
+        }
+        if arguments == ["--help"] {
+            for expected in [
+                "Transfers:",
+                "Snapshot:",
+                "Timeouts:",
+                "--source <URL>\n",
+                "--target <URL>\n",
+                "--source-exporter-transaction-timeout-ms <MS>\n",
+                "--target-truncate",
+            ] {
+                assert!(help.contains(expected), "Missing {expected:?}: {help}");
+            }
+        } else {
+            assert!(help.lines().count() <= 35, "Brief help is too long: {help}");
+            assert!(!help.contains("--source-exporter-transaction-timeout-ms"));
+            assert!(!help.contains("--target-truncate"));
         }
     }
     Ok(())
