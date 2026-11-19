@@ -1,9 +1,4 @@
-<h1>
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/pgex-logo-dark.svg">
-    <img src="assets/pgex-logo.svg" alt="pgex">
-  </picture>
-</h1>
+# ![pgex](assets/pgex-logo.svg#gh-light-mode-only)![pgex](assets/pgex-logo-dark.svg#gh-dark-mode-only)
 
 Export PostgreSQL data.
 
