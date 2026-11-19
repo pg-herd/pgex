@@ -1,6 +1,21 @@
-# ![pgex](assets/pgex-logo.svg#gh-light-mode-only)![pgex](assets/pgex-logo-dark.svg#gh-dark-mode-only)
+<div align="center">
 
-Export PostgreSQL data.
+![pgex](assets/pgex-logo.svg#gh-light-mode-only)![pgex](assets/pgex-logo-dark.svg#gh-dark-mode-only)
+
+</div>
+
+<div align="center">
+
+
+Fast, snapshot-consistent PostgreSQL data transfers.<br/>
+Transfer whole tables or filter rows with SQL.
+
+[About](#about) · [Quick start](#quick-start) · [Install](#install) ·
+[Config](#config) · [All options](#all-options) · [Build and contribute](CONTRIBUTING.md)
+
+</div>
+
+## About
 
 Copy whole tables or select rows with SQL conditions. Save reusable settings in
 YAML, supply parameters from the command line, and copy multiple tables in
@@ -14,10 +29,6 @@ selected slice of data into another PostgreSQL database.
 - **Reuse your setup:** YAML configuration with explicit command-line changes.
 - **Check inputs early:** SQL syntax and parameter validation with errors pointing to the condition.
 - **Control the refresh:** replace matching rows, append rows, or truncate before copying.
-
-[Quick start](#quick-start) · [Install](#install) · [Config](#config) ·
-[All options](#all-options) ·
-[Build and contribute](CONTRIBUTING.md)
 
 ## Quick start
 
