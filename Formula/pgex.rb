@@ -1,14 +1,14 @@
 class Pgex < Formula
   desc "Copy PostgreSQL tables with SQL row filters and consistent snapshots"
   homepage "https://github.com/pg-herd/pgex"
-  url "https://github.com/pg-herd/pgex/releases/download/v0.1.3/pgex-v0.1.3-aarch64-apple-darwin.tar.gz"
-  version "0.1.3"
-  sha256 "d1854b3d50238ecbb0492c50a1db65ee447d399d28f63a95e520920477065356"
+  url "https://github.com/pg-herd/pgex/releases/download/v0.1.4/pgex-v0.1.4-aarch64-apple-darwin.tar.gz"
+  version "0.1.4"
+  sha256 "8ab12304c668c3def9c9637a82bc8ccc3b8775cea4fcc34f05e3a5955a9aa2fe"
   license "MIT"
 
   bottle do
-    root_url "https://github.com/pg-herd/pgex/releases/download/v0.1.3"
-    sha256 cellar: :any, arm64_sequoia: "31e450beb581cf5db808254a7d40e50621e7e5ef3ee5eb679e3a05fb5994f1f4"
+    root_url "https://github.com/pg-herd/pgex/releases/download/v0.1.4"
+    sha256 cellar: :any, arm64_sequoia: "a5c7924579b6a40c51217dc7f9c1240c3af0e64c3fafe2de833115450554d5f4"
   end
 
   depends_on arch: :arm64
