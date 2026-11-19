@@ -1,6 +1,6 @@
-use std::io::Write;
+use std::{io::Write, time::Duration};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use pgex::connection::Connector;
 use tempfile::NamedTempFile;
 use testcontainers::{
@@ -38,11 +38,33 @@ enum Backend {
 
 impl PostgresTestDatabase {
     pub(super) async fn stderr(&self) -> Result<String> {
-        match &self.backend {
-            Backend::Container(container) => {
-                Ok(String::from_utf8(container.stderr_to_vec().await?)?)
+        // A completed SQL command can precede Docker's delivery of its log entry.
+        // Wait for a later server message before checking statement counts/order.
+        let mut bytes = [0; 16];
+        getrandom::fill(&mut bytes).map_err(|error| anyhow::anyhow!("{error}"))?;
+        let marker = format!("pgex-log-barrier-{:032x}", u128::from_be_bytes(bytes));
+        let session = self.connector().await?.connect().await?;
+        session
+            .client()
+            .batch_execute(&format!("DO $$ BEGIN RAISE LOG '{marker}'; END $$"))
+            .await?;
+        session.close().await;
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let log = match &self.backend {
+                Backend::Container(container) => {
+                    String::from_utf8(container.stderr_to_vec().await?)?
+                }
+                Backend::Native(database) => database.stderr().await?,
+            };
+            if log.lines().any(|line| line.ends_with(&marker)) {
+                return Ok(log);
             }
-            Backend::Native(database) => database.stderr().await,
+            if tokio::time::Instant::now() >= deadline {
+                bail!("PostgreSQL log barrier did not arrive within five seconds:\n{log}");
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
         }
     }
 
