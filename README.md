@@ -15,9 +15,33 @@ selected slice of data into another PostgreSQL database.
 - **Check inputs early:** SQL syntax and parameter validation with errors pointing to the condition.
 - **Control the refresh:** replace matching rows, append rows, or truncate before copying.
 
-[Install](#install) · [Quick start](#quick-start) · [Filter rows](#filter-rows) ·
-[YAML configuration](#yaml-configuration) · [All options](#all-options) ·
+[Quick start](#quick-start) · [Install](#install) · [Config](#config) ·
+[All options](#all-options) ·
 [Build and contribute](CONTRIBUTING.md)
+
+## Quick start
+
+The source and destination tables must already exist. Pgex copies rows; it does
+not create schemas or synchronize sequence counters. Use PostgreSQL 14 or newer
+with TLS enabled. Source credentials need permission to read the selected tables;
+destination credentials need permission to read, insert, and delete their rows.
+
+```sh
+export PGEX_SOURCE_PASSWORD='source-password'
+export PGEX_TARGET_PASSWORD='target-password'
+
+pgex \
+  --source 'postgresql://sync_user@source.example.com/app' \
+  --target 'postgresql://sync_user@target.example.com/app' \
+  --tables public.orders,public.order_items
+```
+
+This refreshes every row in the two destination tables. Omit `--tables` to select
+all ordinary source tables and partition roots in non-system schemas. A successful
+run prints `Sync complete.`
+
+Source and destination layouts are checked before copying. See
+[Refresh behavior](#refresh-behavior) for transaction and failure behavior.
 
 ## Install
 
@@ -149,29 +173,7 @@ repeat the download and verification steps and replace the installed executable.
 Run `pgex --help` to check the installation. For a source build, see
 [Building and contributing](CONTRIBUTING.md).
 
-## Quick start
-
-The source and destination tables must already exist. Pgex copies rows; it does
-not create schemas or synchronize sequence counters. Use PostgreSQL 14 or newer
-with TLS enabled. Source credentials need permission to read the selected tables;
-destination credentials need permission to read, insert, and delete their rows.
-
-```sh
-export PGEX_SOURCE_PASSWORD='source-password'
-export PGEX_TARGET_PASSWORD='target-password'
-
-pgex \
-  --source 'postgresql://sync_user@source.example.com/app' \
-  --target 'postgresql://sync_user@target.example.com/app' \
-  --tables public.orders,public.order_items
-```
-
-This refreshes every row in the two destination tables. Omit `--tables` to select
-all ordinary source tables and partition roots in non-system schemas. A successful
-run prints `Sync complete.`
-
-Source and destination layouts are checked before copying. See
-[Refresh behavior](#refresh-behavior) for transaction and failure behavior.
+## Config
 
 ### Connections and credentials
 
@@ -211,7 +213,7 @@ Without a password, pgex attempts passwordless authentication. Ambient
 `PGPASSWORD` and implicit password files do not supply credentials. In CI, provide
 `PGEX_SOURCE_PASSWORD` and `PGEX_TARGET_PASSWORD` through your secret store.
 
-## Filter rows
+### Filter rows
 
 Give `--where` a SQL condition without the `WHERE` keyword. Use named parameters
 for values:
@@ -234,7 +236,7 @@ Conditions can contain subqueries and PostgreSQL functions. SQL syntax and
 parameter values are checked before connecting. PostgreSQL checks referenced
 objects and SQL type compatibility when it executes the condition.
 
-### Parameters
+#### Parameters
 
 A placeholder is `{{name}}` or `{{name:type}}`. Names start with an ASCII letter or
 underscore and contain only ASCII letters, digits, and underscores. Names and type
@@ -261,7 +263,7 @@ map. YAML parameter values must be strings: quote numbers, booleans, dates, and
 array values. CLI values replace YAML values with the same name. Missing, invalid,
 duplicate, or unused parameter values are errors. NUL characters are rejected.
 
-## YAML configuration
+### YAML configuration
 
 Run a saved configuration with:
 
@@ -342,7 +344,7 @@ to the current working directory. Explicit table names use simple `schema.table`
 identifiers; an explicit table list must be nonempty and contain no duplicates.
 Omitting the list enables discovery, including catalog names requiring SQL quoting.
 
-### Which settings win?
+#### Which settings win?
 
 Explicit CLI settings take precedence over the corresponding YAML fields; omitted
 CLI settings leave YAML values intact. Defaults apply only after both inputs are
