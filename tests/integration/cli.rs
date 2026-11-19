@@ -30,10 +30,22 @@ async fn cli_displays_help_without_connection_settings() -> Result<()> {
             "pgex --config pgex.yml",
             "PGEX_SOURCE_PASSWORD",
             "PGEX_TARGET_PASSWORD",
+            "Selection:",
+            "Source:",
+            "Destination:",
+            "Transfers:",
+            "Snapshot:",
+            "Timeouts:",
+            "--source <URL>\n",
+            "--target <URL>\n",
+            "--source-exporter-transaction-timeout-ms <MS>\n",
         ] {
             assert!(help.contains(expected), "Missing {expected:?}: {help}");
         }
         assert!(!help.contains("Missing source.connection.url"), "{help}");
+        for line in help.lines() {
+            assert!(line.len() <= 80, "Help exceeds 80 columns: {line}");
+        }
     }
     Ok(())
 }

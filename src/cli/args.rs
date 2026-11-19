@@ -28,12 +28,14 @@ use pgex::{
 #[command(
     about = "Refresh tables in a PostgreSQL destination",
     arg_required_else_help = true,
+    next_line_help = true,
     after_help = r#"Examples:
   pgex --config pgex.yml
   pgex --source postgresql://sync_user@source.example.com/app \
        --target postgresql://sync_user@target.example.com/app
 
-Supply passwords through PGEX_SOURCE_PASSWORD and PGEX_TARGET_PASSWORD."#
+Supply passwords through PGEX_SOURCE_PASSWORD and PGEX_TARGET_PASSWORD.
+Boolean flags accept =true or =false."#
 )]
 pub(crate) struct Cli {
     /// Read settings from a YAML file.
@@ -41,111 +43,117 @@ pub(crate) struct Cli {
     config: Option<PathBuf>,
 
     /// Shared SQL WHERE condition for source tables.
-    #[arg(long = "where", value_name = "PREDICATE")]
+    #[arg(long = "where", value_name = "PREDICATE", help_heading = "Selection")]
     where_clause: Option<String>,
 
     /// Supply a raw value for a named predicate parameter. May be repeated.
-    #[arg(long, value_name = "NAME=VALUE")]
+    #[arg(long, value_name = "NAME=VALUE", help_heading = "Selection")]
     param: Vec<String>,
 
     /// PostgreSQL URL or libpq-style connection string.
-    #[arg(long)]
+    #[arg(long, value_name = "URL", help_heading = "Source")]
     source: Option<String>,
 
-    /// Source username. Takes precedence over the YAML user and the URL username.
-    #[arg(long)]
+    /// Source username (CLI > YAML > connection string).
+    #[arg(long, value_name = "USER", help_heading = "Source")]
     source_user: Option<String>,
 
-    /// Source password. Falls back to YAML, PGEX_SOURCE_PASSWORD, then the connection string.
-    #[arg(long)]
+    /// Password (CLI > YAML > PGEX_SOURCE_PASSWORD > connection string).
+    #[arg(long, value_name = "PASSWORD", help_heading = "Source")]
     source_password: Option<String>,
 
-    /// PEM certificate authority for the source. Defaults to the system certificate trust store.
-    #[arg(long)]
+    /// Source CA certificate in PEM format. Defaults to system trust.
+    #[arg(long, value_name = "PATH", help_heading = "Source")]
     ca: Option<PathBuf>,
 
     /// Fail source transfers if a row-level security policy applies.
-    #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = "true")]
+    #[arg(long, value_name = "BOOL", hide_possible_values = true, help_heading = "Source", num_args = 0..=1, require_equals = true, default_missing_value = "true")]
     source_row_security_off: Option<bool>,
 
     /// Destination PostgreSQL URL or libpq-style connection string.
-    #[arg(long)]
+    #[arg(long, value_name = "URL", help_heading = "Destination")]
     target: Option<String>,
 
-    /// Destination username. Takes precedence over the YAML user and the URL username.
-    #[arg(long)]
+    /// Destination username (CLI > YAML > connection string).
+    #[arg(long, value_name = "USER", help_heading = "Destination")]
     target_user: Option<String>,
 
-    /// Destination password. Falls back to YAML, PGEX_TARGET_PASSWORD, then the connection string.
-    #[arg(long)]
+    /// Password (CLI > YAML > PGEX_TARGET_PASSWORD > connection string).
+    #[arg(long, value_name = "PASSWORD", help_heading = "Destination")]
     target_password: Option<String>,
 
-    /// PEM certificate authority for the destination. Defaults to the system certificate trust store.
-    #[arg(long)]
+    /// Destination CA certificate in PEM format. Defaults to system trust.
+    #[arg(long, value_name = "PATH", help_heading = "Destination")]
     target_ca: Option<PathBuf>,
 
     /// Fail destination transfers if a row-level security policy applies.
-    #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = "true")]
+    #[arg(long, value_name = "BOOL", hide_possible_values = true, help_heading = "Destination", num_args = 0..=1, require_equals = true, default_missing_value = "true")]
     target_row_security_off: Option<bool>,
 
     /// Compare source and destination table layouts before transfer.
-    #[arg(long, action = clap::ArgAction::Set)]
+    #[arg(long, value_name = "BOOL", hide_possible_values = true, help_heading = "Transfers", action = clap::ArgAction::Set)]
     target_validate_layouts: Option<bool>,
 
-    /// Skip the job-wide destination table locks. Layout validation still applies.
-    #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = "true")]
+    /// Skip job-wide destination locks. Layout validation still applies.
+    #[arg(long, value_name = "BOOL", hide_possible_values = true, help_heading = "Transfers", num_args = 0..=1, require_equals = true, default_missing_value = "true")]
     no_target_locks: Option<bool>,
 
-    /// Maximum PostgreSQL transfer worker threads, capped by the source reader limit.
-    #[arg(long)]
+    /// Transfer worker threads, capped by the source reader limit.
+    #[arg(long, value_name = "COUNT", help_heading = "Transfers")]
     target_parallel_transfers: Option<NonZeroUsize>,
 
-    /// Commit after a whole table brings the destination's copied payload to this size in MiB.
-    #[arg(long)]
+    /// Commit once a whole table brings copied bytes to this size in MiB.
+    #[arg(long, value_name = "MIB", help_heading = "Transfers")]
     target_commit_group_mib: Option<NonZeroU32>,
 
-    /// Use PostgreSQL replica trigger behavior inside destination commit groups.
-    #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = "true")]
+    /// Use replica trigger behavior inside destination commit groups.
+    #[arg(long, value_name = "BOOL", hide_possible_values = true, help_heading = "Transfers", num_args = 0..=1, require_equals = true, default_missing_value = "true")]
     target_replica_role: Option<bool>,
 
     /// Copy selected rows without deleting existing destination rows.
-    #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = "true")]
+    #[arg(long, value_name = "BOOL", hide_possible_values = true, help_heading = "Transfers", num_args = 0..=1, require_equals = true, default_missing_value = "true")]
     target_skip_delete: Option<bool>,
 
-    /// TRUNCATE each destination table with CASCADE before copying. The truncate commits separately.
-    #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = "true")]
+    /// TRUNCATE tables with CASCADE before COPY, committing separately.
+    #[arg(long, value_name = "BOOL", hide_possible_values = true, help_heading = "Transfers", num_args = 0..=1, require_equals = true, default_missing_value = "true")]
     target_truncate: Option<bool>,
 
-    /// Comma-separated source tables, each as schema.table. Omit to discover tables in all non-system schemas.
-    #[arg(long, value_name = "TABLE_LIST", value_delimiter = ',', action = clap::ArgAction::Set)]
+    /// Comma-separated schema.table names. Default: all non-system tables.
+    #[arg(long, value_name = "TABLES", help_heading = "Selection", value_delimiter = ',', action = clap::ArgAction::Set)]
     tables: Option<Vec<QualifiedTable>>,
 
-    /// Source snapshot mode. Defaults to shared when omitted from CLI and YAML.
-    #[arg(long, value_enum, value_name = "MODE")]
+    /// Use shared (default) or per-statement snapshots.
+    #[arg(
+        long,
+        value_enum,
+        value_name = "MODE",
+        hide_possible_values = true,
+        help_heading = "Snapshot"
+    )]
     source_snapshot: Option<SnapshotMode>,
 
-    /// Maximum concurrent source reader sessions. The source table locks use a separate session.
-    #[arg(long)]
+    /// Maximum source readers. Source locks use a separate session.
+    #[arg(long, value_name = "COUNT", help_heading = "Snapshot")]
     source_reader_limit: Option<NonZeroUsize>,
 
-    /// Maximum source table lock transaction lifetime in milliseconds (PostgreSQL 17+).
-    #[arg(long, value_parser = clap::value_parser!(u32).range(..=i64::from(i32::MAX)))]
+    /// Source lock transaction timeout in milliseconds (PostgreSQL 17+).
+    #[arg(long, value_name = "MS", help_heading = "Timeouts", value_parser = clap::value_parser!(u32).range(..=i64::from(i32::MAX)))]
     source_exporter_transaction_timeout_ms: Option<u32>,
 
     /// Maximum idle time in the source table lock transaction in milliseconds.
-    #[arg(long, value_parser = clap::value_parser!(u32).range(..=i64::from(i32::MAX)))]
+    #[arg(long, value_name = "MS", help_heading = "Timeouts", value_parser = clap::value_parser!(u32).range(..=i64::from(i32::MAX)))]
     source_exporter_idle_in_transaction_timeout_ms: Option<u32>,
 
-    /// Maximum source reader transaction lifetime in milliseconds (PostgreSQL 17+).
-    #[arg(long, value_parser = clap::value_parser!(u32).range(..=i64::from(i32::MAX)))]
+    /// Source reader transaction timeout in milliseconds (PostgreSQL 17+).
+    #[arg(long, value_name = "MS", help_heading = "Timeouts", value_parser = clap::value_parser!(u32).range(..=i64::from(i32::MAX)))]
     source_reader_transaction_timeout_ms: Option<u32>,
 
     /// Maximum idle time in a source reader transaction in milliseconds.
-    #[arg(long, value_parser = clap::value_parser!(u32).range(..=i64::from(i32::MAX)))]
+    #[arg(long, value_name = "MS", help_heading = "Timeouts", value_parser = clap::value_parser!(u32).range(..=i64::from(i32::MAX)))]
     source_reader_idle_in_transaction_timeout_ms: Option<u32>,
 
-    /// Milliseconds between PostgreSQL disconnect checks during source transactions. Zero disables checks.
-    #[arg(long, value_parser = clap::value_parser!(u32).range(..=i64::from(i32::MAX)))]
+    /// Source disconnect check interval in milliseconds. Zero disables checks.
+    #[arg(long, value_name = "MS", help_heading = "Timeouts", value_parser = clap::value_parser!(u32).range(..=i64::from(i32::MAX)))]
     client_connection_check_interval_ms: Option<u32>,
 }
 
