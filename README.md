@@ -34,9 +34,27 @@ brew install pgex
 The tap and formula trust are a one-time setup. Homebrew installs the required
 PostgreSQL client library automatically. To update pgex later, run `brew update && brew upgrade pgex`.
 
-### Debian and Ubuntu
+### Linux
 
-Packages are tested on Debian 12 and Ubuntu 24.04, for x86-64 and ARM64.
+With `curl` installed, run:
+
+```sh
+curl -fsSL https://pg-herd.github.io/pgex/install.sh | sh
+```
+
+The installer detects your distribution, adds the signed APT or RPM repository,
+and installs pgex and its runtime libraries. It uses `sudo` when needed. Updates
+then arrive through your normal package manager.
+
+Installation is tested on Debian 12, Ubuntu 24.04, Fedora 45, and Rocky Linux 9,
+for x86-64 and ARM64. RPM packages also target RHEL-compatible systems version 9
+or newer, including RHEL, CentOS Stream, and AlmaLinux. Linux binaries require
+glibc 2.34 or newer. The installer reports unsupported distributions or
+architectures before changing package configuration.
+
+<details>
+<summary>Manual APT setup (Debian and Ubuntu)</summary>
+
 Add the pgex repository once:
 
 ```sh
@@ -49,8 +67,25 @@ sudo apt-get update
 sudo apt-get install pgex
 ```
 
-APT installs the required client libraries automatically. Later updates are
-available through normal APT upgrades. To remove pgex, run `sudo apt-get remove pgex`.
+To update, use `sudo apt-get update && sudo apt-get install --only-upgrade pgex`.
+To remove pgex, use `sudo apt-get remove pgex`.
+
+</details>
+
+<details>
+<summary>Manual RPM setup (Fedora and RHEL-compatible systems)</summary>
+
+With `curl` installed, add the repository once:
+
+```sh
+sudo curl -fsSLo /etc/yum.repos.d/pgex.repo https://pg-herd.github.io/pgex/rpm/pgex.repo
+sudo dnf install pgex
+```
+
+DNF verifies both the repository metadata and the packages. To update, use
+`sudo dnf upgrade pgex`. To remove pgex, use `sudo dnf remove pgex`.
+
+</details>
 
 ### Download a release
 

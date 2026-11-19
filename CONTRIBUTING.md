@@ -116,29 +116,39 @@ installs and tests the existing binary on a GitHub runner, then uploads the bott
 and its metadata to the release. Update the formula's `bottle` block with that
 metadata. Verify installation with `brew reinstall pgex` and `brew test pgex`.
 
-### Publish the APT repository
+### Publish Linux packages and repositories
 
-The [APT workflow](.github/workflows/apt.yml) packages existing Linux release
-binaries; it does not rebuild pgex or change the parser. It tests installation,
-SQL diagnostics, upgrades, removal, and rejection of untrusted signatures on
-Debian 12 and Ubuntu 24.04, for both supported architectures.
+The [Linux packages workflow](.github/workflows/linux-packages.yml) wraps the existing Linux
+release executables in Debian and RPM packages. It does not rebuild pgex. RPM
+packaging verifies that the executable is unchanged. Native x86-64 and ARM64 jobs
+test the generic installer, dependency resolution, offline SQL diagnostics,
+upgrades, removal, and signature rejection on Debian 12, Ubuntu 24.04,
+Fedora 45, and Rocky Linux 9.
 
 One-time setup:
 
 1. In the repository's **Settings → Pages**, select **GitHub Actions** as the source.
 2. Add the repository Actions secrets `APT_SIGNING_KEY` (the exported, encrypted
-   private key) and `APT_SIGNING_PASSPHRASE` (its passphrase).
+   private key) and `APT_SIGNING_PASSPHRASE` (its passphrase). These existing
+   secrets sign both APT and RPM; no second signing key is needed.
 3. Keep a password-manager backup of both. GitHub's settings do not reveal secret
-   values after they are saved. The public key is tracked at
-   [release/apt/pgex.asc](release/apt/pgex.asc); the workflow checks that it matches
-   the private signing key.
+   values after they are saved. The shared public key is tracked at
+   [release/pgex.asc](release/pgex.asc); publishing checks that it matches the
+   private signing key.
 
-Run **APT repository** manually to publish an existing release; the optional
+Run **Linux packages** manually to publish an existing release; the optional
 `tag` input defaults to the latest stable release. Successful **Release binaries**
-runs trigger it automatically for future releases. Pushes to the APT tooling run
-package tests without publishing.
+runs trigger it automatically for future releases. Pushes to package tooling run
+tests without publishing.
 
-Packages are added to their GitHub release without replacing existing assets.
-The workflow collects the published packages, creates and signs the APT indexes,
-and deploys them to GitHub Pages. Private keys stay in the runner's temporary
-directory. Production keys are never generated automatically by CI.
+The workflow signs new RPM packages before uploading them to their GitHub release.
+Existing release assets remain unchanged. It collects all published Debian and RPM
+packages, signs both repositories, and deploys `apt/`, `rpm/`, and `install.sh`
+together to GitHub Pages. APT indexes, RPM metadata, and individual RPM packages
+are signed. Production keys remain in the runner's temporary directory and are
+never generated automatically by CI.
+
+[release/install.sh](release/install.sh) selects APT or DNF from `/etc/os-release`.
+It checks the architecture, glibc version, and distribution support before
+changing package configuration. It supports root and sudo and installs only from
+the signed repositories. Unsupported systems exit with a clear message.

@@ -1,23 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# != 4 ]]; then
-  echo "Usage: $0 REPOSITORY_URL PUBLIC_KEY EXPECTED_VERSION PREVIOUS_PACKAGE" >&2
+if [[ $# != 5 ]]; then
+  echo "Usage: $0 REPOSITORY_URL PUBLIC_KEY EXPECTED_VERSION PREVIOUS_PACKAGE INSTALLER" >&2
   exit 2
 fi
 repository=$1
 key=$2
 version=$3
 previous=$4
+installer=$5
 export DEBIAN_FRONTEND=noninteractive
 # Match the README bootstrap: HTTPS repositories need the CA trust store first.
 apt-get update
-apt-get install -y --no-install-recommends ca-certificates
-install -Dm644 "$key" /etc/apt/keyrings/pgex.asc
-sed "s|^URIs:.*|URIs: $repository|" "$(dirname "$key")/pgex.sources" \
-  > /etc/apt/sources.list.d/pgex.sources
-apt-get update
-apt-get install -y --no-install-recommends pgex
+apt-get install -y --no-install-recommends ca-certificates curl
+sh "$installer"
+cmp "$key" /etc/apt/keyrings/pgex.asc
+grep -Fx "URIs: $repository" /etc/apt/sources.list.d/pgex.sources
 [[ "$(dpkg-query -W -f='${Version}' pgex)" == "$version" ]]
 LD_BIND_NOW=1 pgex --help >/dev/null
 [[ -f /usr/share/doc/pgex/copyright && -d /usr/share/doc/pgex/licenses ]]
@@ -54,4 +53,4 @@ if apt-get -o APT::Update::Error-Mode=any update > /tmp/pgex-untrusted 2>&1; the
   exit 1
 fi
 grep -E 'NO_PUBKEY|signature' /tmp/pgex-untrusted
-printf 'PASS: installation, dependency resolution, SQL diagnostics, upgrade, removal, and signature rejection\n'
+printf 'PASS: generic installer, installation, dependency resolution, SQL diagnostics, upgrade, removal, and signature rejection\n'
