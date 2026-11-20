@@ -18,7 +18,8 @@ refuse() {
     exit 1
   fi
   grep -F "$1" "$work/output"
-  [[ ! -e /etc/apt/sources.list.d/pgex.sources && ! -e /etc/yum.repos.d/pgex.repo && ! -e /etc/pacman.d/pgex.conf ]]
+  [[ ! -e /etc/apt/sources.list.d/pgex.sources && ! -e /etc/yum.repos.d/pgex.repo &&
+     ! -e /etc/zypp/repos.d/pgex.repo && ! -e /etc/pacman.d/pgex.conf ]]
 }
 
 cat > "$work/bin/uname" <<'SH'
@@ -38,8 +39,10 @@ printf 'ID=unsupported\nVERSION_ID=1\n' > /etc/os-release
 refuse 'Supported distributions:'
 printf 'ID=rocky\nVERSION_ID=8.10\n' > /etc/os-release
 refuse 'RPM installation requires RHEL-compatible version 9 or newer.'
-printf 'ID=debian\nVERSION_ID=12\n' > /etc/os-release
 printf '#!/bin/sh\necho "glibc 2.33"\n' > "$work/bin/getconf"
 chmod +x "$work/bin/getconf"
+printf 'ID=debian\nVERSION_ID=12\n' > /etc/os-release
+refuse 'pgex requires glibc 2.34 or newer.'
+printf 'ID=opensuse-leap\nVERSION_ID=15.6\n' > /etc/os-release
 refuse 'pgex requires glibc 2.34 or newer.'
 printf 'PASS: unsupported architecture, distribution, RPM baseline, and glibc are rejected before package configuration changes\n'

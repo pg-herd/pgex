@@ -168,7 +168,8 @@ release executables in Debian, RPM, Alpine, and Arch packages. It does not rebui
 packaging verifies that the executable is unchanged. Native x86-64 and ARM64 jobs
 test the generic installer, dependency resolution, offline SQL diagnostics,
 upgrades, removal, and signature rejection on Debian 12, Ubuntu 24.04,
-Fedora 45, and Rocky Linux 9.
+Fedora 45, and Rocky Linux 9. The same RPM packages and repository are tested
+with Zypper on openSUSE Leap 16.0 and Tumbleweed.
 
 One-time setup:
 
@@ -196,7 +197,7 @@ together to GitHub Pages. The Arch packages and indexes are signed when assembli
 the Pages repository. Production keys remain in the runner's temporary directory and are
 never generated automatically by CI.
 
-[release/install.sh](release/install.sh) selects APT, DNF, APK, or pacman from `/etc/os-release`.
+[release/install.sh](release/install.sh) selects APT, DNF, Zypper, APK, or pacman from `/etc/os-release`.
 It checks the architecture, distribution support, and glibc version where applicable before
 changing package configuration. It supports root and sudo and installs only from
 the signed repositories. Unsupported systems exit with a clear message.

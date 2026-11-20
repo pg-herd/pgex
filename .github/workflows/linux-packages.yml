@@ -175,6 +175,26 @@ jobs:
             architecture: aarch64
             image: fedora:45
           - runner: ubuntu-24.04
+            format: rpm
+            architecture: x86_64
+            image: registry.opensuse.org/opensuse/leap:16.0
+            rpm_client: zypper
+          - runner: ubuntu-24.04-arm
+            format: rpm
+            architecture: aarch64
+            image: registry.opensuse.org/opensuse/leap:16.0
+            rpm_client: zypper
+          - runner: ubuntu-24.04
+            format: rpm
+            architecture: x86_64
+            image: registry.opensuse.org/opensuse/tumbleweed:latest
+            rpm_client: zypper
+          - runner: ubuntu-24.04-arm
+            format: rpm
+            architecture: aarch64
+            image: registry.opensuse.org/opensuse/tumbleweed:latest
+            rpm_client: zypper
+          - runner: ubuntu-24.04
             format: arch
             architecture: x86_64
             image: archlinux:base
@@ -193,6 +213,7 @@ jobs:
           ARCHITECTURE: ${{ matrix.architecture }}
           IMAGE: ${{ matrix.image }}
           FORMAT: ${{ matrix.format }}
+          RPM_CLIENT: ${{ matrix.rpm_client }}
           APT_SIGNING_PASSPHRASE: pgex-temporary-test-only
         run: |
           sudo apt-get update
@@ -216,6 +237,12 @@ jobs:
               release/rpm/sign-packages.sh packages "$key"
               release/rpm/sign-packages.sh previous "$key"
               release/rpm/build-repository.sh packages repository/rpm "$key" http://127.0.0.1:8000/rpm
+              if [[ "$RPM_CLIENT" == zypper ]]; then
+                invalid="repository/rpm-invalid/$ARCHITECTURE/repodata"
+                mkdir -p "$invalid"
+                cp "repository/rpm/$ARCHITECTURE/repodata/repomd.xml" "$invalid/repomd.xml"
+                printf 'invalid signature\n' > "$invalid/repomd.xml.asc"
+              fi
               previous="/work/previous/pgex-$VERSION-0.$ARCHITECTURE.rpm"
               ;;
             arch)
@@ -233,6 +260,10 @@ jobs:
             sed -i "s/EFD48C2B17A32B00855B52E00623CF316C7C43E4/$key/" installer.sh
             docker run --rm --network host --mount type=bind,src="$PWD",dst=/work,readonly "$IMAGE" \
               bash /work/release/arch/test-install.sh http://127.0.0.1:8000 "$VERSION" /work/installer.sh
+          elif [[ "$RPM_CLIENT" == zypper ]]; then
+            docker run --rm --network host --mount type=bind,src="$PWD",dst=/work,readonly "$IMAGE" \
+              bash /work/release/rpm/test-install-zypper.sh http://127.0.0.1:8000/rpm \
+              "$VERSION" "$previous" /work/installer.sh
           else
             docker run --rm --network host --mount type=bind,src="$PWD",dst=/work,readonly "$IMAGE" \
               bash "/work/release/$kind/test-install.sh" "http://127.0.0.1:8000/$kind" \

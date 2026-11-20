@@ -19,6 +19,7 @@ main() {
   case "${ID:-}" in
     debian|ubuntu) manager=apt ;;
     fedora) manager=dnf ;;
+    opensuse-leap|opensuse-tumbleweed) manager=zypper ;;
     arch)
       [ "$architecture" = x86_64 ] || fail 'Arch Linux packages require x86-64.'
       manager=pacman ;;
@@ -35,7 +36,7 @@ main() {
       distribution_version=${VERSION_ID:-0}
       [ "${distribution_version%%.*}" -ge 9 ] || fail 'RPM installation requires RHEL-compatible version 9 or newer.'
       manager=dnf ;;
-    *) fail 'Supported distributions: Debian, Ubuntu, Fedora, Alpine 3.24+, Arch Linux, and RHEL-compatible systems (RHEL, CentOS Stream, Rocky, AlmaLinux) version 9 or newer.' ;;
+    *) fail 'Supported distributions: Debian, Ubuntu, Fedora, openSUSE Leap and Tumbleweed, Alpine 3.24+, Arch Linux, and RHEL-compatible systems (RHEL, CentOS Stream, Rocky, AlmaLinux) version 9 or newer.' ;;
   esac
   [ ! -e /run/ostree-booted ] || fail 'Immutable OSTree systems are not supported by this installer.'
   if [ "$manager" != apk ]; then
@@ -80,6 +81,16 @@ main() {
       $privilege install -d -m0755 /etc/yum.repos.d
       $privilege install -m0644 "$temporary/pgex.repo" /etc/yum.repos.d/pgex.repo
       $privilege dnf install -y pgex
+      ;;
+    zypper)
+      command -v zypper >/dev/null 2>&1 || fail 'Zypper is not available on this system.'
+      curl -fsSL "$base/rpm/pgex.asc" -o "$temporary/pgex.asc"
+      curl -fsSL "$base/rpm/pgex.repo" -o "$temporary/pgex.repo"
+      printf '\nautorefresh=1\npkg_gpgcheck=1\n' >> "$temporary/pgex.repo"
+      $privilege rpm --import "$temporary/pgex.asc"
+      $privilege install -Dm0644 "$temporary/pgex.repo" /etc/zypp/repos.d/pgex.repo
+      $privilege zypper --non-interactive refresh pgex
+      $privilege zypper --non-interactive install --from pgex pgex
       ;;
     apk)
       command -v apk >/dev/null 2>&1 || fail 'APK is not available on this system.'
