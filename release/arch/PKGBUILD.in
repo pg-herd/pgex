@@ -1,5 +1,5 @@
 # Maintainer: Tomer Sela <tomersela@gmail.com>
-pkgname=pgex-bin
+pkgname=@NAME@
 pkgver=@VERSION@
 pkgrel=1
 pkgdesc='Export PostgreSQL data'
@@ -7,8 +7,12 @@ arch=('x86_64')
 url='https://github.com/pg-herd/pgex'
 license=('MIT')
 depends=('glibc' 'gcc-libs' 'postgresql-libs' 'ca-certificates')
-provides=("pgex=$pkgver")
-conflicts=('pgex')
+if [[ $pkgname == pgex-bin ]]; then
+  provides=("pgex=$pkgver")
+  conflicts=('pgex')
+else
+  conflicts=('pgex-bin')
+fi
 options=('!strip' '!debug')
 source=("https://github.com/pg-herd/pgex/releases/download/v${pkgver}/pgex-v${pkgver}-x86_64-unknown-linux-gnu.tar.gz")
 sha256sums=('@SHA256@')

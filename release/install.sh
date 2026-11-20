@@ -7,7 +7,8 @@ main() {
     exit 2
   fi
   [ "$(uname -s)" = Linux ] || fail 'This installer supports Linux. On macOS, use Homebrew.'
-  case "$(uname -m)" in
+  architecture=$(uname -m)
+  case "$architecture" in
     x86_64|aarch64|arm64) ;;
     *) fail 'pgex supports x86-64 and ARM64.' ;;
   esac
@@ -18,6 +19,9 @@ main() {
   case "${ID:-}" in
     debian|ubuntu) manager=apt ;;
     fedora) manager=dnf ;;
+    arch)
+      [ "$architecture" = x86_64 ] || fail 'Arch Linux packages require x86-64.'
+      manager=pacman ;;
     alpine)
       distribution_version=${VERSION_ID:-0}
       major=${distribution_version%%.*}
@@ -31,7 +35,7 @@ main() {
       distribution_version=${VERSION_ID:-0}
       [ "${distribution_version%%.*}" -ge 9 ] || fail 'RPM installation requires RHEL-compatible version 9 or newer.'
       manager=dnf ;;
-    *) fail 'Supported distributions: Debian, Ubuntu, Fedora, Alpine 3.24+, and RHEL-compatible systems (RHEL, CentOS Stream, Rocky, AlmaLinux) version 9 or newer.' ;;
+    *) fail 'Supported distributions: Debian, Ubuntu, Fedora, Alpine 3.24+, Arch Linux, and RHEL-compatible systems (RHEL, CentOS Stream, Rocky, AlmaLinux) version 9 or newer.' ;;
   esac
   [ ! -e /run/ostree-booted ] || fail 'Immutable OSTree systems are not supported by this installer.'
   if [ "$manager" != apk ]; then
@@ -88,9 +92,46 @@ main() {
       fi
       $privilege apk add --update-cache pgex
       ;;
+    pacman)
+      install_arch
+      ;;
   esac
   pgex --help >/dev/null
   echo 'pgex installed. Run pgex --help to get started.'
+}
+
+install_arch() {
+  command -v pacman >/dev/null 2>&1 || fail 'Pacman is not available on this system.'
+  repositories=$(pacman-conf --repo-list)
+  include='Include = /etc/pacman.d/pgex.conf'
+  if printf '%s\n' "$repositories" | grep -Fxq pgex && ! grep -Fxq "$include" /etc/pacman.conf; then
+    fail 'A pgex repository is already configured in pacman. Review it before running this installer.'
+  fi
+
+  fingerprint=EFD48C2B17A32B00855B52E00623CF316C7C43E4
+  curl -fsSL "$base/arch/pgex.asc" -o "$temporary/pgex.asc"
+  downloaded=$(gpg --batch --no-options --homedir "$temporary" --with-colons --show-keys "$temporary/pgex.asc" |
+    awk -F: '$1 == "pub" {primary = 1} $1 == "fpr" && primary {print $10; primary = 0}')
+  [ "$downloaded" = "$fingerprint" ] || fail 'The pacman repository signing key does not match the pgex fingerprint.'
+
+  $privilege pacman-key --init
+  $privilege pacman-key --add "$temporary/pgex.asc"
+  $privilege pacman-key --lsign-key "$fingerprint"
+  cat > "$temporary/pgex.conf" <<REPOSITORY
+[pgex]
+SigLevel = Required TrustedOnly
+Server = $base/arch/\$arch
+REPOSITORY
+  $privilege install -Dm0644 "$temporary/pgex.conf" /etc/pacman.d/pgex.conf
+  if ! grep -Fxq "$include" /etc/pacman.conf; then
+    printf '\n%s\n' "$include" | $privilege tee -a /etc/pacman.conf >/dev/null
+  fi
+  # Keep pacman's interactive upgrade prompt off the installer script's stdin.
+  if ( : </dev/tty ) 2>/dev/null; then
+    $privilege pacman -Syu --needed pgex/pgex </dev/tty
+  else
+    $privilege pacman -Syu --needed --noconfirm pgex/pgex </dev/null
+  fi
 }
 
 fail() {

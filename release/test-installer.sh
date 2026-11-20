@@ -18,7 +18,7 @@ refuse() {
     exit 1
   fi
   grep -F "$1" "$work/output"
-  [[ ! -e /etc/apt/sources.list.d/pgex.sources && ! -e /etc/yum.repos.d/pgex.repo ]]
+  [[ ! -e /etc/apt/sources.list.d/pgex.sources && ! -e /etc/yum.repos.d/pgex.repo && ! -e /etc/pacman.d/pgex.conf ]]
 }
 
 cat > "$work/bin/uname" <<'SH'
@@ -28,6 +28,9 @@ SH
 chmod +x "$work/bin/uname"
 export PATH="$work/bin:$original_path"
 refuse 'pgex supports x86-64 and ARM64.'
+sed -i 's/riscv64/aarch64/' "$work/bin/uname"
+printf 'ID=arch\n' > /etc/os-release
+refuse 'Arch Linux packages require x86-64.'
 rm "$work/bin/uname"
 printf 'ID=alpine\nVERSION_ID=3.23\n' > /etc/os-release
 refuse 'APK installation requires Alpine 3.24 or newer.'

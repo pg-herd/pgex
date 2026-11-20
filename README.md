@@ -71,18 +71,18 @@ PostgreSQL client library automatically. To update pgex later, run `brew update 
 
 ### Linux
 
-On Debian, Ubuntu, Fedora, Alpine, and RHEL-compatible systems, with `curl` installed:
+On Debian, Ubuntu, Fedora, Alpine, Arch Linux, and RHEL-compatible systems, with `curl` installed:
 
 ```sh
 curl -fsSL https://pg-herd.github.io/pgex/install.sh | sh
 ```
 
-The installer detects your distribution, adds the signed APT, RPM, or APK repository,
+The installer detects your distribution, adds the signed package repository,
 and installs pgex and its runtime libraries. It uses `sudo` when needed. Updates
 then arrive through your normal package manager.
 
-Installation is tested on Debian 12, Ubuntu 24.04, Fedora 45, Rocky Linux 9, and Alpine 3.24,
-for x86-64 and ARM64. RPM packages also target RHEL-compatible systems version 9
+Installation is tested on Debian 12, Ubuntu 24.04, Fedora 45, Rocky Linux 9, and Alpine 3.24
+for x86-64 and ARM64, and on Arch Linux for x86-64. RPM packages also target RHEL-compatible systems version 9
 or newer, including RHEL, CentOS Stream, and AlmaLinux. APT and RPM packages require
 glibc 2.34 or newer. APK packages require Alpine Linux 3.24 or newer. The installer reports unsupported
 distributions or architectures before changing package configuration.
@@ -142,28 +142,10 @@ To remove pgex, use `apk del pgex`.
 
 ### Arch Linux
 
-The `pgex-bin` AUR package is being prepared; publication is waiting for AUR
-account registration to reopen. Once published, install it with an AUR helper:
-
-```sh
-yay -S pgex-bin
-```
-
-It uses our prebuilt x86-64 executable. To update, use `yay -Syu`.
-To remove pgex, use `sudo pacman -R pgex-bin`.
-
-Without an AUR helper, install with Arch's standard packaging tools:
-
-```sh
-sudo pacman -S --needed base-devel git
-git clone https://aur.archlinux.org/pgex-bin.git
-cd pgex-bin
-makepkg -si
-```
-
-For subsequent updates, run `git pull --ff-only && makepkg -si` in that directory.
-Until the AUR package is published, use the Linux x86-64 archive under
-[Download a release](#download-a-release), with `postgresql-libs` installed.
+Use the Linux installer above. It adds the signed pgex repository to pacman and
+runs a full system upgrade as part of the install. Run it in a terminal to review
+the upgrade before confirming. Use `sudo pacman -Syu` for future updates and
+`sudo pacman -R pgex` to remove pgex.
 
 ### Nix
 

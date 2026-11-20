@@ -8,6 +8,7 @@ on:
       - 'release/apt/**'
       - 'release/rpm/**'
       - 'release/apk/**'
+      - 'release/arch/**'
       - 'release/install.sh'
       - 'release/test-installer.sh'
   workflow_run:
@@ -40,8 +41,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REQUESTED_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ github.event.workflow_run.head_branch }}
         run: |
-          tag=$(gh release view ${REQUESTED_TAG:+"$REQUESTED_TAG"} --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          tag=${REQUESTED_TAG:-${RELEASE_TAG:-}}
+          tag=$(gh release view ${tag:+"$tag"} --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
           [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
@@ -67,6 +70,10 @@ jobs:
             format: rpm
             architecture: aarch64
             target: aarch64-unknown-linux-gnu
+          - runner: ubuntu-24.04
+            format: arch
+            architecture: x86_64
+            target: x86_64-unknown-linux-gnu
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -77,15 +84,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.release.outputs.tag }}
           TARGET: ${{ matrix.target }}
+          FORMAT: ${{ matrix.format }}
         run: |
           archive="pgex-$TAG-$TARGET.tar.gz"
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$archive*"
           sha256sum --check "$archive.sha256"
-          mkdir input
-          tar -xzf "$archive" --strip-components=1 -C input
+          if [[ "$FORMAT" != arch ]]; then
+            mkdir input
+            tar -xzf "$archive" --strip-components=1 -C input
+          fi
       - name: Build native packages from the released executable
         env:
           VERSION: ${{ needs.release.outputs.version }}
+          TARGET: ${{ matrix.target }}
           ARCHITECTURE: ${{ matrix.architecture }}
           FORMAT: ${{ matrix.format }}
         run: |
@@ -104,6 +115,18 @@ jobs:
                 /work/release/rpm/build-package.sh /work/input "$VERSION" "$ARCHITECTURE" /work/packages
               docker run --rm --mount type=bind,src="$PWD",dst=/work pgex-package-builder \
                 /work/release/rpm/build-package.sh /work/input "$VERSION" "$ARCHITECTURE" /work/previous 0
+              ;;
+            arch)
+              archive="pgex-v$VERSION-$TARGET.tar.gz"
+              checksum=$(sha256sum "$archive" | cut -d ' ' -f 1)
+              python3 release/arch/prepare-package.py release/arch/PKGBUILD.in pgex "v$VERSION" "$checksum" PKGBUILD
+              sed 's/^pkgrel=1$/pkgrel=0/' PKGBUILD > previous.PKGBUILD
+              docker build --tag pgex-package-builder release/arch
+              docker run --rm --mount type=bind,src="$PWD",dst=/work pgex-package-builder \
+                bash /work/release/arch/build-package.sh /work/PKGBUILD "/work/$archive" /work/packages
+              docker run --rm --mount type=bind,src="$PWD",dst=/work pgex-package-builder \
+                bash /work/release/arch/build-package.sh /work/previous.PKGBUILD "/work/$archive" /work/previous
+              rm -f packages/{PKGBUILD,.SRCINFO} previous/{PKGBUILD,.SRCINFO}
               ;;
           esac
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -151,6 +174,10 @@ jobs:
             format: rpm
             architecture: aarch64
             image: fedora:45
+          - runner: ubuntu-24.04
+            format: arch
+            architecture: x86_64
+            image: archlinux:base
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -169,7 +196,11 @@ jobs:
           APT_SIGNING_PASSPHRASE: pgex-temporary-test-only
         run: |
           sudo apt-get update
-          sudo apt-get install -y apt-utils dpkg-dev gnupg rpm createrepo-c
+          if [[ "$FORMAT" == arch ]]; then
+            sudo apt-get install -y gnupg pacman-package-manager makepkg libarchive-tools zstd
+          else
+            sudo apt-get install -y apt-utils dpkg-dev gnupg rpm createrepo-c
+          fi
           mkdir -m700 "$GNUPGHOME"
           gpg --batch --pinentry-mode loopback --passphrase-fd 3 \
             --quick-generate-key 'pgex temporary repository test' rsa3072 sign 1d 3<<<"$APT_SIGNING_PASSPHRASE"
@@ -187,15 +218,26 @@ jobs:
               release/rpm/build-repository.sh packages repository/rpm "$key" http://127.0.0.1:8000/rpm
               previous="/work/previous/pgex-$VERSION-0.$ARCHITECTURE.rpm"
               ;;
+            arch)
+              kind=arch
+              bash release/arch/build-repository.sh packages repository/arch "$key"
+              bash release/arch/build-repository.sh previous repository/old/arch "$key"
+              ;;
           esac
           sed 's|https://pg-herd.github.io/pgex|http://127.0.0.1:8000|g' release/install.sh > installer.sh
           python3 -m http.server 8000 --directory repository > "$RUNNER_TEMP/http.log" 2>&1 &
           server=$!
           trap 'kill "$server"' EXIT
           curl --retry 5 --retry-connrefused --retry-delay 1 --fail --silent "http://127.0.0.1:8000/$kind/pgex.asc" >/dev/null
-          docker run --rm --network host --mount type=bind,src="$PWD",dst=/work,readonly "$IMAGE" \
-            bash "/work/release/$kind/test-install.sh" "http://127.0.0.1:8000/$kind" \
-            "/work/repository/$kind/pgex.asc" "$VERSION" "$previous" /work/installer.sh
+          if [[ "$FORMAT" == arch ]]; then
+            sed -i "s/EFD48C2B17A32B00855B52E00623CF316C7C43E4/$key/" installer.sh
+            docker run --rm --network host --mount type=bind,src="$PWD",dst=/work,readonly "$IMAGE" \
+              bash /work/release/arch/test-install.sh http://127.0.0.1:8000 "$VERSION" /work/installer.sh
+          else
+            docker run --rm --network host --mount type=bind,src="$PWD",dst=/work,readonly "$IMAGE" \
+              bash "/work/release/$kind/test-install.sh" "http://127.0.0.1:8000/$kind" \
+              "/work/repository/$kind/pgex.asc" "$VERSION" "$previous" /work/installer.sh
+          fi
       - name: Check unsupported platforms leave package configuration unchanged
         if: matrix.architecture == 'amd64' && matrix.image == 'debian:bookworm-slim'
         run: |
@@ -317,7 +359,7 @@ jobs:
         run: |
           [[ -n "$APT_SIGNING_KEY" && -n "$APT_SIGNING_PASSPHRASE" ]] || { echo 'Repository signing secrets are missing.' >&2; exit 1; }
           sudo apt-get update
-          sudo apt-get install -y apt-utils dpkg-dev gnupg rpm createrepo-c
+          sudo apt-get install -y apt-utils dpkg-dev gnupg rpm createrepo-c pacman-package-manager makepkg libarchive-tools zstd
           mkdir -m700 "$GNUPGHOME"
           printf '%s' "$APT_SIGNING_KEY" | gpg --batch --import
           expected=$(gpg --batch --with-colons --show-keys release/pgex.asc | awk -F: '$1 == "fpr" {print $10; exit}')
@@ -341,17 +383,17 @@ jobs:
           TAG: ${{ needs.release.outputs.tag }}
         run: |
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' > existing-assets
-          for package in artifacts/packages/*.deb artifacts/packages/*.rpm artifacts/packages/*.apk; do
+          for package in artifacts/packages/*.deb artifacts/packages/*.rpm artifacts/packages/*.apk artifacts/packages/*.pkg.tar.zst; do
             if ! grep -Fxq "$(basename "$package")" existing-assets; then
               gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" "$package"
             fi
           done
-          mkdir -p repository-packages/deb repository-packages/rpm repository-packages/apk
+          mkdir -p repository-packages/{deb,rpm,apk,arch}
           gh api --paginate "repos/$GITHUB_REPOSITORY/releases" \
-            --jq '.[] | select(.draft == false and .prerelease == false) | .assets[] | select((.name | endswith(".deb")) or (.name | endswith(".rpm")) or (.name | endswith(".apk"))) | .browser_download_url' \
+            --jq '.[] | select(.draft == false and .prerelease == false) | .assets[] | select(.name | test("\\.(deb|rpm|apk|pkg\\.tar\\.zst)$")) | .browser_download_url' \
             > package-urls
           while IFS= read -r url; do
-            case "$url" in *.deb) format=deb ;; *.rpm) format=rpm ;; *.apk) format=apk ;; *) exit 1 ;; esac
+            case "$url" in *.deb) format=deb ;; *.rpm) format=rpm ;; *.apk) format=apk ;; *.pkg.tar.zst) format=arch ;; *) exit 1 ;; esac
             curl --fail --location --silent --show-error "$url" --output "repository-packages/$format/${url##*/}"
           done < package-urls
       - name: Sign and assemble the repositories and installer
@@ -362,6 +404,7 @@ jobs:
           key=$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1 == "fpr" {print $10; exit}')
           release/apt/build-repository.sh repository-packages/deb site/apt "$key"
           release/rpm/build-repository.sh repository-packages/rpm site/rpm "$key"
+          bash release/arch/build-repository.sh repository-packages/arch site/arch "$key"
           docker run --rm --mount type=bind,src="$PWD",dst=/work \
             --mount type=bind,src="$RUNNER_TEMP/apk-key",dst=/keys,readonly pgex-apk-builder \
             /work/release/apk/build-repository.sh /work/repository-packages/apk /work/site/apk /keys/pgex.rsa

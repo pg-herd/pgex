@@ -164,7 +164,7 @@ needed for a new release.
 ### Publish Linux packages and repositories
 
 The [Linux packages workflow](.github/workflows/linux-packages.yml) wraps the existing Linux
-release executables in Debian and RPM packages. It does not rebuild pgex. RPM
+release executables in Debian, RPM, Alpine, and Arch packages. It does not rebuild pgex. RPM
 packaging verifies that the executable is unchanged. Native x86-64 and ARM64 jobs
 test the generic installer, dependency resolution, offline SQL diagnostics,
 upgrades, removal, and signature rejection on Debian 12, Ubuntu 24.04,
@@ -175,7 +175,7 @@ One-time setup:
 1. In the repository's **Settings → Pages**, select **GitHub Actions** as the source.
 2. Add the repository Actions secrets `APT_SIGNING_KEY` (the exported, encrypted
    private key) and `APT_SIGNING_PASSPHRASE` (its passphrase). These existing
-   secrets sign both APT and RPM.
+   secrets sign APT, RPM, and Arch.
 3. Keep a password-manager backup of both. GitHub's settings do not reveal secret
    values after they are saved. The shared public key is tracked at
    [release/pgex.asc](release/pgex.asc); publishing checks that it matches the
@@ -191,12 +191,12 @@ tests without publishing.
 
 The workflow signs new RPM packages before uploading them to their GitHub release.
 Existing release assets remain unchanged. It collects all published Debian, RPM,
-and APK packages and deploys `apt/`, `rpm/`, `apk/`, and `install.sh`
-together to GitHub Pages. APT indexes, RPM metadata, APK indexes, and RPM/APK packages
-are signed. Production keys remain in the runner's temporary directory and are
+APK, and Arch packages and deploys `apt/`, `rpm/`, `apk/`, `arch/`, and `install.sh`
+together to GitHub Pages. The Arch packages and indexes are signed when assembling
+the Pages repository. Production keys remain in the runner's temporary directory and are
 never generated automatically by CI.
 
-[release/install.sh](release/install.sh) selects APT, DNF, or APK from `/etc/os-release`.
+[release/install.sh](release/install.sh) selects APT, DNF, APK, or pacman from `/etc/os-release`.
 It checks the architecture, distribution support, and glibc version where applicable before
 changing package configuration. It supports root and sudo and installs only from
 the signed repositories. Unsupported systems exit with a clear message.
@@ -206,6 +206,9 @@ modifying them. Native x86-64 and ARM64 jobs build signed packages and test the
 generic installer, dependency resolution, SQL diagnostics, upgrade from an older
 package, removal, and rejection of untrusted signatures in clean Alpine 3.24
 containers. Pushes use throwaway signing keys; publication uses the saved key.
+
+Arch packaging uses the x86-64 glibc release binary. The clean Arch test checks
+signatures, installation, repeated setup, upgrading with pacman, and removal.
 
 ### Publish the Arch Linux AUR package
 

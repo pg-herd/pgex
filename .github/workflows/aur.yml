@@ -6,10 +6,18 @@ on:
     paths:
       - '.github/workflows/aur.yml'
       - 'release/aur/**'
+      - 'release/arch/Dockerfile'
+      - 'release/arch/PKGBUILD.in'
+      - 'release/arch/build-package.sh'
+      - 'release/arch/prepare-package.py'
   pull_request:
     paths:
       - '.github/workflows/aur.yml'
       - 'release/aur/**'
+      - 'release/arch/Dockerfile'
+      - 'release/arch/PKGBUILD.in'
+      - 'release/arch/build-package.sh'
+      - 'release/arch/prepare-package.py'
   workflow_run:
     workflows: ['Release binaries']
     types: [completed]
@@ -54,16 +62,17 @@ jobs:
           gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern "$archive*"
           sha256sum --check "$archive.sha256"
           checksum=$(sha256sum "$archive" | cut -d ' ' -f 1)
-          mkdir input generated
-          tar -xzf "$archive" --strip-components=1 -C input
-          python3 release/aur/prepare-package.py release/aur/PKGBUILD.in "$tag" "$checksum" generated/PKGBUILD
+          mkdir generated
+          python3 release/arch/prepare-package.py release/arch/PKGBUILD.in pgex-bin "$tag" "$checksum" generated/PKGBUILD
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
       - name: Test the AUR recipe, installation, and upgrade on Arch Linux
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
         run: |
-          docker build --tag pgex-aur-builder release/aur
+          docker build --tag pgex-aur-builder release/arch
           docker run --rm --mount type=bind,src="$PWD",dst=/work pgex-aur-builder \
-            /work/release/aur/test-package.sh /work/generated/PKGBUILD /work/input /work/tested
+            /work/release/aur/test-package.sh /work/generated/PKGBUILD "/work/pgex-$TAG-x86_64-unknown-linux-gnu.tar.gz" /work/tested
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: aur-recipe
