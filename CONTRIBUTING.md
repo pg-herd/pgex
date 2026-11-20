@@ -226,6 +226,27 @@ pinned `KSXGitHub/github-actions-deploy-aur` action. The workflow can also be ru
 manually for an existing release. Older releases do not replace the latest AUR
 version; updates use normal Git pushes without rewriting AUR history.
 
+### Publish the Nix package
+
+[flake.nix](flake.nix) exposes `packages.<system>.pgex`, the default package, and
+`nix run` for Linux x86-64/ARM64 and macOS ARM64. The package uses the existing
+release archives, pinned by SHA-256 in [sources.json](release/nix/sources.json).
+Linux uses Nix's `autoPatchelfHook` to select the Nix loader and runtime libraries.
+macOS replaces the Homebrew libpq path with Nix's libpq and signs the adjusted
+executable locally. Neither platform recompiles pgex.
+
+[Nix package](.github/workflows/nix.yml) tests all three platforms on native
+runners. `nix flake check` verifies runtime linking, help, SQL diagnostics, and
+license files. The profile test installs 0.1.4, upgrades to the current release,
+checks `nix run`, and removes the package.
+
+Successful releases update the source metadata only after all platform tests
+pass. The workflow commits that metadata to `main` using `GITHUB_TOKEN`; no
+additional account, signing key, binary cache service, or payment is required.
+Run it manually to update to an already-published release. Changes to the flake
+or Nix tooling run tests without publishing. `flake.lock` pins the Nixpkgs input;
+update it deliberately with `nix flake update nixpkgs` and rerun the tests.
+
 ### Publish Docker images
 
 The [Docker image workflow](.github/workflows/docker.yml) downloads and verifies

@@ -165,6 +165,29 @@ For subsequent updates, run `git pull --ff-only && makepkg -si` in that director
 Until the AUR package is published, use the Linux x86-64 archive under
 [Download a release](#download-a-release), with `postgresql-libs` installed.
 
+### Nix
+
+With Nix's `nix-command` and `flakes` features enabled:
+
+```sh
+nix profile install github:pg-herd/pgex#pgex
+```
+
+Supported platforms are Linux x86-64, Linux ARM64, and Apple Silicon macOS 15 or
+newer. Nix supplies the runtime libraries; no Rust compiler is needed.
+To update, run `nix profile upgrade --refresh pgex`. To remove, run
+`nix profile remove pgex`.
+
+To run without installing:
+
+```sh
+nix run github:pg-herd/pgex -- --help
+```
+
+This installs directly from our flake; pgex is not yet in the nixpkgs catalog.
+For NixOS or Home Manager, add `github:pg-herd/pgex` as a flake input and select
+`inputs.pgex.packages.${pkgs.stdenv.hostPlatform.system}.pgex` in your package list.
+
 ### Docker
 
 The image includes pgex and its runtime libraries, for Linux x86-64 and ARM64:
