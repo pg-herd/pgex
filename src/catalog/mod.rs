@@ -1,4 +1,5 @@
 mod layout;
+pub mod objects;
 mod reader;
 mod validation;
 

@@ -43,7 +43,7 @@ impl<T: Target> JobRunner<T> {
                     })
                     .await?;
                 let source_plan = plan_source_tables(&source_layouts, filters)?;
-                self.target.run(&readers, &source_plan).await
+                self.target.sync_rows(&readers, &source_plan).await
             })
             .await?;
         Ok(())

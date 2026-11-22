@@ -81,7 +81,11 @@ impl PostgresTarget {
 }
 
 impl Target for PostgresTarget {
-    async fn run(&self, readers: &SnapshotReaders<'_>, source_plan: &SourcePlan<'_>) -> Result<()> {
+    async fn sync_rows(
+        &self,
+        readers: &SnapshotReaders<'_>,
+        source_plan: &SourcePlan<'_>,
+    ) -> Result<()> {
         let tables: Vec<_> = source_plan
             .tables
             .iter()
