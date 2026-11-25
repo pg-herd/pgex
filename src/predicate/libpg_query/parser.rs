@@ -2,11 +2,10 @@ use std::ffi::CString;
 
 use super::{
     error::{ParseError, copy_error},
-    ffi::{pg_query_free_protobuf_parse_result, pg_query_parse_protobuf},
+    ffi::{pg_query_free_split_result, pg_query_split_with_parser},
 };
 
-// Only the unmodified package's native build/link integration is needed. The
-// Rust AST is not decoded, and the C error position is retained.
+// Link the native PostgreSQL parser built by pg_query.
 use pg_query as _;
 
 const PREFIX: &str = "CREATE POLICY pgex_predicate ON pgex_table USING (\n";
@@ -20,7 +19,7 @@ pub(in crate::predicate) fn parse_expression(expression: &str) -> Result<(), Par
         message: "SQL condition contains a NUL character".into(),
         byte_offset: Some(error.nul_position() - PREFIX.len()),
     })?;
-    let result = unsafe { pg_query_parse_protobuf(statement.as_ptr()) };
+    let result = unsafe { pg_query_split_with_parser(statement.as_ptr()) };
     let error = if result.error.is_null() {
         None
     } else {
@@ -36,9 +35,8 @@ pub(in crate::predicate) fn parse_expression(expression: &str) -> Result<(), Par
             .map(|position| position.min(expression.len()));
         Some(error)
     };
-    // Copy diagnostics before freeing both the native AST and error buffers.
-    // No pointer into libpg_query allocations leaves this adapter.
-    unsafe { pg_query_free_protobuf_parse_result(result) };
+    // The split result owns the statement spans and native diagnostics.
+    unsafe { pg_query_free_split_result(result) };
     error.map_or(Ok(()), Err)
 }
 
@@ -51,7 +49,7 @@ mod tests {
         let input = "note = '🌿'\r\nAND id = LIMIT";
         let error = parse_expression(input).expect_err("Invalid expression");
         assert_eq!(error.byte_offset, input.find("LIMIT"));
-        assert!(error.message.contains("syntax error"));
+        assert_eq!(error.message, "syntax error at or near \"LIMIT\"");
     }
 
     #[test]
@@ -66,5 +64,6 @@ mod tests {
         let input = "note = '🌿' AND id =\r\n";
         let error = parse_expression(input).expect_err("Incomplete expression");
         assert_eq!(error.byte_offset, Some(input.len()));
+        assert_eq!(error.message, "syntax error at or near \")\"");
     }
 }

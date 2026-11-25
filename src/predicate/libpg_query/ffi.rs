@@ -12,15 +12,16 @@ pub(super) struct NativeError {
 }
 
 #[repr(C)]
-pub(super) struct Protobuf {
-    pub(super) len: usize,
-    pub(super) data: *mut c_char,
+struct SplitStatement {
+    location: c_int,
+    len: c_int,
 }
 
 #[repr(C)]
-pub(super) struct ParseResult {
-    pub(super) parse_tree: Protobuf,
-    pub(super) stderr_buffer: *mut c_char,
+pub(super) struct SplitResult {
+    statements: *mut *mut SplitStatement,
+    statement_count: c_int,
+    stderr_buffer: *mut c_char,
     pub(super) error: *mut NativeError,
 }
 
@@ -43,6 +44,6 @@ unsafe extern "C" {
     pub(super) fn pg_query_scan_tokens(input: *const c_char) -> ScanResult;
     pub(super) fn pg_query_free_scan_tokens_result(result: ScanResult);
     pub(super) fn pg_query_token_name(token: c_int) -> *const c_char;
-    pub(super) fn pg_query_parse_protobuf(input: *const c_char) -> ParseResult;
-    pub(super) fn pg_query_free_protobuf_parse_result(result: ParseResult);
+    pub(super) fn pg_query_split_with_parser(input: *const c_char) -> SplitResult;
+    pub(super) fn pg_query_free_split_result(result: SplitResult);
 }
