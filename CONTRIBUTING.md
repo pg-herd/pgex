@@ -58,7 +58,7 @@ cargo test --locked -- --test-threads=2    # Full suite, with limited test concu
 Start Docker or Docker Desktop before running integration tests. Testcontainers
 starts disposable PostgreSQL 17 instances, generates TLS certificates and
 passwords, and removes the containers afterward. The first run may pull the
-pinned `postgres:17.11-bookworm` image. No existing database is required.
+pinned `postgres:17.12-bookworm` image. No existing database is required.
 
 On macOS, the same tests can start disposable native PostgreSQL instances instead:
 

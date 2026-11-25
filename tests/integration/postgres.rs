@@ -43,7 +43,17 @@ impl PostgresTestDatabase {
         let mut bytes = [0; 16];
         getrandom::fill(&mut bytes).map_err(|error| anyhow::anyhow!("{error}"))?;
         let marker = format!("pgex-log-barrier-{:032x}", u128::from_be_bytes(bytes));
-        let session = self.connector().await?.connect().await?;
+        // Keep the marker independent of the test database's installed languages.
+        let mut maintenance = url::Url::parse(&self.connection_string)?;
+        maintenance.set_path("/postgres");
+        let session = Connector::new(
+            maintenance.as_str(),
+            Some(self.ca.path()),
+            Some(&self.password),
+        )
+        .await?
+        .connect()
+        .await?;
         session
             .client()
             .batch_execute(&format!("DO $$ BEGIN RAISE LOG '{marker}'; END $$"))
@@ -86,7 +96,7 @@ impl PostgresTestDatabase {
             return native::start(std::path::Path::new(&bin), password).await;
         }
 
-        let container = GenericImage::new("postgres", "17.11-bookworm")
+        let container = GenericImage::new("postgres", "17.12-bookworm")
             .with_exposed_port(POSTGRES_PORT.tcp())
             .with_entrypoint("sh")
             .with_wait_for(WaitFor::message_on_stdout(
