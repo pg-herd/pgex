@@ -7,9 +7,9 @@ license = "MIT"
 publish = false
 
 [dependencies]
-anyhow = "1"
+anyhow = "1.0.105"
 bytes = "1.12.2"
-clap = { version = "4.6.8", features = ["derive"] }
+clap = { version = "4.6.10", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde-saphyr = { version = "2.2.0", default-features = false, features = ["deserialize"] }
 pg_query = "=18.1.0"
@@ -18,11 +18,11 @@ tokio = { version = "1", features = ["fs", "io-std", "io-util", "macros", "rt", 
 unicode-width = { version = "0.2", default-features = false }
 
 libc = "0.2"
-pq-sys = "=0.7.8"
+pq-sys = "=0.7.9"
 postgres-types = { version = "0.2", features = ["with-time-0_3"] }
 
 [dev-dependencies]
-url = "2"
+url = "2.5.9"
 getrandom = "0.4.3"
 tempfile = "3"
 testcontainers = "0.28"
