@@ -494,14 +494,13 @@ destination rows. Inserts still obey constraints, so duplicate keys can fail the
 transaction. This is an append operation, not an upsert.
 
 `--target-truncate` runs `TRUNCATE ... CASCADE` before each table is copied. It
-requires TRUNCATE privileges, skips the job-wide destination locks, and commits
-the truncate separately. COPY normally commits per table; with replica role
-enabled, its setup and COPY are committed together per table.
+requires TRUNCATE privileges and skips the job-wide destination locks. Each worker
+holds the truncate's exclusive lock through COPY and commits once per table.
+If COPY fails, PostgreSQL rolls back that table's truncate, including its cascades.
 
 **Truncate removes all destination rows, even with a source WHERE condition.**
 CASCADE can also empty referencing tables outside the selection or tables already
-copied by another worker. If COPY fails, the truncate stays committed. Use distinct
-source and destination tables for this mode.
+copied by another worker. Use distinct source and destination tables for this mode.
 
 ### Triggers, row security, and timeouts
 
@@ -578,7 +577,7 @@ Use `--target-skip-delete=false`, for example, to explicitly disable a YAML sett
 | `--target-validate-layouts BOOL` | `target.transfer.validate_layouts` | `true`; compare source and destination layouts before transfer. |
 | `--no-target-locks[=BOOL]` | `target.transfer.no_locks` | `false`; skip job-wide destination table locks. |
 | `--target-skip-delete[=BOOL]` | `target.transfer.skip_delete` | `false`; append rows without a preceding DELETE. |
-| `--target-truncate[=BOOL]` | `target.transfer.truncate` | `false`; truncate and commit each destination table before copying. |
+| `--target-truncate[=BOOL]` | `target.transfer.truncate` | `false`; truncate and copy in one transaction per destination table. |
 | `--target-replica-role[=BOOL]` | `target.session.replica_role` | `false`; use replica trigger behavior for destination copying. |
 | `--target-row-security-off[=BOOL]` | `target.session.row_security_off` | `false`; fail statements subject to row security. |
 

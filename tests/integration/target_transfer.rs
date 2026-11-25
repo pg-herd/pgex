@@ -459,7 +459,7 @@ async fn skip_delete_preserves_destination_rows_and_inserts_selected_rows() -> R
 }
 
 #[tokio::test]
-async fn truncate_commits_before_filtered_copy_and_cascades() -> Result<()> {
+async fn truncate_and_filtered_copy_commit_or_roll_back_together() -> Result<()> {
     let (source, mut target) =
         tokio::try_join!(PostgresTestDatabase::start(), PostgresTestDatabase::start())?;
     let source_session = source.connector().await?.connect().await?;
@@ -521,18 +521,28 @@ async fn truncate_commits_before_filtered_copy_and_cascades() -> Result<()> {
     target_client
         .batch_execute(
             "UPDATE public.items SET id = 9;
+                        INSERT INTO public.children VALUES (9);
                         ALTER TABLE public.items ADD CHECK (id > 8)",
         )
         .await?;
-    let result = run().output().await?;
-    assert!(!result.status.success());
-    let error = String::from_utf8_lossy(&result.stderr);
-    assert!(error.contains("violates check constraint"), "{error}");
-    let remaining: i64 = target_client
-        .query_one("SELECT count(*) FROM public.items", &[])
-        .await?
-        .get(0);
-    assert_eq!(remaining, 0);
+    for replica_role in [false, true] {
+        let mut command = run();
+        if replica_role {
+            command.arg("--target-replica-role");
+        }
+        let result = command.output().await?;
+        assert!(!result.status.success());
+        let error = String::from_utf8_lossy(&result.stderr);
+        assert!(error.contains("violates check constraint"), "{error}");
+        let remaining = target_client
+            .query_one(
+                "SELECT ARRAY(SELECT id FROM public.items), ARRAY(SELECT item_id FROM public.children)",
+                &[],
+            )
+            .await?;
+        assert_eq!(remaining.get::<Vec<i32>, _>(0), [9]);
+        assert_eq!(remaining.get::<Vec<i32>, _>(1), [9]);
+    }
     Ok(())
 }
 

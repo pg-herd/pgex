@@ -17,11 +17,6 @@ pub(super) struct TableWriteResult {
     pub(super) payload_bytes: u64,
 }
 
-pub(super) enum CopyTransaction {
-    Explicit,
-    Implicit,
-}
-
 pub(super) async fn lock_source_for_copy(source: &Session, table: &QualifiedTable) -> Result<()> {
     let relation = source
         .client()
@@ -41,7 +36,6 @@ pub(super) async fn copy_table(
     source: &Session,
     destination: &Session,
     table: &PostgresTable,
-    transaction: CopyTransaction,
 ) -> Result<TableWriteResult> {
     let mut destination_guard = destination.client().connection().await?;
     let destination = destination_guard.get().await?;
@@ -78,7 +72,7 @@ pub(super) async fn copy_table(
         format!(" ({target_columns})")
     };
     let copy_in = format!("COPY {target_relation}{copy_columns} FROM STDIN (FORMAT TEXT)");
-    copy_rows(source, destination, &copy_out, &copy_in, transaction).await
+    copy_rows(source, destination, &copy_out, &copy_in).await
 }
 
 pub(super) async fn delete_rows(destination: &Session, table: &PostgresTable) -> Result<()> {
@@ -124,7 +118,6 @@ async fn copy_rows(
     destination: &mut PgConnection,
     copy_out: &str,
     copy_in: &str,
-    transaction: CopyTransaction,
 ) -> Result<TableWriteResult> {
     let output = destination
         .copy_in_raw(copy_in)
@@ -178,7 +171,7 @@ async fn copy_rows(
             }
         };
     }
-    writer.finish(transaction).await
+    writer.finish().await
 }
 
 struct DestinationCopyWriter<'a> {
@@ -197,14 +190,11 @@ impl DestinationCopyWriter<'_> {
         Ok(())
     }
 
-    async fn finish(self, transaction: CopyTransaction) -> Result<TableWriteResult> {
-        let context = match transaction {
-            CopyTransaction::Explicit => "Finish destination COPY",
-            CopyTransaction::Implicit => "Commit destination COPY",
-        };
-        // Libpq completion consumes all results through ReadyForQuery, including
-        // autocommit/deferred constraint errors, without an extra transaction.
-        self.sink.finish().await.context(context)?;
+    async fn finish(self) -> Result<TableWriteResult> {
+        self.sink
+            .finish()
+            .await
+            .context("Finish destination COPY")?;
         Ok(TableWriteResult {
             payload_bytes: self.payload_bytes,
         })
