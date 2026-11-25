@@ -16,7 +16,7 @@ impl<E: fmt::Display> fmt::Display for SnapshotScopeError<E> {
         match self {
             Self::Setup(error) => write!(f, "Source reader setup: {error:#}"),
             Self::ExporterLost(error) => {
-                write!(f, "Source table lock session disconnected: {error:#}")
+                write!(f, "Source coordinator session disconnected: {error:#}")
             }
             Self::Work(error) => write!(f, "Source reader callback: {error:#}"),
             Self::Rollback {

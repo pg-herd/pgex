@@ -4,7 +4,9 @@ use crate::{connection::Session, work_queue::WorkQueue};
 
 use super::{
     PostgresTable, PostgresTargetOptions,
-    transfer::{CopyTransaction, copy_table, delete_rows, set_replica_role_if_enabled},
+    transfer::{
+        CopyTransaction, copy_table, delete_rows, lock_source_for_copy, set_replica_role_if_enabled,
+    },
 };
 
 enum GroupEnd {
@@ -44,6 +46,7 @@ async fn transfer_group(
     let mut table = first_table;
     loop {
         let write = async {
+            lock_source_for_copy(source, &table.name).await?;
             if !options.skip_delete {
                 delete_rows(destination, &table).await?;
             }

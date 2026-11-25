@@ -69,6 +69,12 @@ async fn worker_imports_once_and_reuses_one_destination_session_across_transacti
     // One import to read layouts and one for the worker's entire loop.
     assert_eq!(imports.len(), 2, "{log}");
     assert_ne!(imports[0], imports[1], "{log}");
+    let source_locks = statement_backends(&log, |sql| {
+        sql.starts_with("LOCK TABLE ") && sql.ends_with(" IN ACCESS SHARE MODE NOWAIT")
+    });
+    let source_copies = statement_backends(&log, |sql| sql.starts_with("COPY (SELECT "));
+    assert_eq!(source_locks, [imports[1]; 4], "{log}");
+    assert_eq!(source_copies, source_locks, "{log}");
 
     let begins = statement_backends(&log, |sql| sql == "BEGIN");
     let commits = statement_backends(&log, |sql| sql == "COMMIT");
@@ -189,10 +195,17 @@ async fn no_target_locks_skips_the_destination_guard_only() -> Result<()> {
     );
 
     let log = database.stderr().await?;
-    let locks = statement_backends(&log, |sql| {
-        sql == r#"LOCK TABLE "public"."events" IN ACCESS SHARE MODE"#
+    let locks = statement_backends(&log, |sql| sql.starts_with("LOCK TABLE "));
+    let worker_locks = statement_backends(&log, |sql| {
+        sql == r#"LOCK TABLE "public"."events" IN ACCESS SHARE MODE NOWAIT"#
     });
-    assert_eq!(locks.len(), 1, "{log}");
+    assert_eq!(worker_locks.len(), 1, "{log}");
+    assert_eq!(locks, worker_locks, "{log}");
+    assert_eq!(
+        locks,
+        statement_backends(&log, |sql| sql.starts_with("COPY (SELECT ")),
+        "{log}"
+    );
     Ok(())
 }
 

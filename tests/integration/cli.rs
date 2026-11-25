@@ -432,7 +432,7 @@ async fn cli_names_the_supplied_table_when_its_schema_is_missing() -> Result<()>
     assert!(!output.status.success());
     let error = String::from_utf8_lossy(&output.stderr);
     assert!(
-        error.contains(r#"Table "missing_schema"."events" does not exist"#),
+        error.contains(r#"No table layout found for "missing_schema"."events""#),
         "{error}"
     );
     Ok(())

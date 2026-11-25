@@ -26,15 +26,12 @@ impl<T: Target> JobRunner<T> {
 
     pub(crate) async fn run(
         &self,
-        options: SnapshotOptions<'_>,
+        selected: &[QualifiedTable],
+        options: SnapshotOptions,
         read_mode: SourceReadMode,
         filters: &SourceFilterPolicy,
     ) -> Result<()> {
-        let tables = self.table_list(options.tables).await?;
-        let options = SnapshotOptions {
-            tables: &tables,
-            ..options
-        };
+        let tables = self.table_list(selected).await?;
         self.snapshots
             .with_readers(options, read_mode, async |readers| {
                 let source_layouts = readers

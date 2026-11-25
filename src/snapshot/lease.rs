@@ -3,10 +3,7 @@ use std::num::NonZeroUsize;
 use anyhow::{Context, Result, ensure};
 use tokio::sync::{Semaphore, watch};
 
-use crate::{
-    connection::{Connector, Session},
-    table::{QualifiedTable, lock_for_read},
-};
+use crate::connection::{Connector, Session};
 
 use super::{
     error::SnapshotScopeError,
@@ -18,8 +15,7 @@ use super::{
 pub const DEFAULT_CLIENT_CONNECTION_CHECK_INTERVAL_MS: u32 = 1_000;
 pub const DEFAULT_READER_CONNECTION_LIMIT: NonZeroUsize = NonZeroUsize::new(8).unwrap();
 
-pub struct SnapshotOptions<'a> {
-    pub tables: &'a [QualifiedTable],
+pub struct SnapshotOptions {
     pub client_connection_check_interval_ms: u32,
     pub reader_connection_limit: NonZeroUsize,
     pub row_security_off: bool,
@@ -27,10 +23,9 @@ pub struct SnapshotOptions<'a> {
     pub reader_timeouts: SnapshotTimeouts,
 }
 
-impl Default for SnapshotOptions<'_> {
+impl Default for SnapshotOptions {
     fn default() -> Self {
         Self {
-            tables: &[],
             client_connection_check_interval_ms: DEFAULT_CLIENT_CONNECTION_CHECK_INTERVAL_MS,
             reader_connection_limit: DEFAULT_READER_CONNECTION_LIMIT,
             row_security_off: false,
@@ -53,17 +48,17 @@ impl SnapshotLease {
     /// Stops the callback if the exporter disconnects.
     pub async fn with_snapshot<T, E>(
         &self,
-        options: SnapshotOptions<'_>,
+        options: SnapshotOptions,
         work: impl for<'scope> AsyncFnOnce(SnapshotReaders<'scope>) -> Result<T, E>,
     ) -> Result<T, SnapshotScopeError<E>> {
         self.with_readers(options, SourceReadMode::SharedSnapshot, work)
             .await
     }
 
-    /// Holds source table locks while the callback opens readers in the selected mode.
+    /// Keeps the source coordinator session open while the callback opens readers in the selected mode.
     pub async fn with_readers<T, E>(
         &self,
-        options: SnapshotOptions<'_>,
+        options: SnapshotOptions,
         mode: SourceReadMode,
         work: impl for<'scope> AsyncFnOnce(SnapshotReaders<'scope>) -> Result<T, E>,
     ) -> Result<T, SnapshotScopeError<E>> {
@@ -74,17 +69,15 @@ impl SnapshotLease {
             .connect()
             .await
             .map_err(SnapshotScopeError::Setup)?;
-        let result = self
-            .with_locked_readers(&mut exporter, options, mode, work)
-            .await;
+        let result = self.with_exporter(&mut exporter, options, mode, work).await;
         exporter.close().await;
         result
     }
 
-    async fn with_locked_readers<T, E>(
+    async fn with_exporter<T, E>(
         &self,
         exporter: &mut Session,
-        options: SnapshotOptions<'_>,
+        options: SnapshotOptions,
         mode: SourceReadMode,
         work: impl for<'scope> AsyncFnOnce(SnapshotReaders<'scope>) -> Result<T, E>,
     ) -> Result<T, SnapshotScopeError<E>> {
@@ -97,9 +90,6 @@ impl SnapshotLease {
         .await
         .map_err(SnapshotScopeError::Setup)?;
         let result = async {
-            lock_for_read(exporter, options.tables)
-                .await
-                .map_err(SnapshotScopeError::Setup)?;
             let key = match mode {
                 SourceReadMode::SharedSnapshot => Some(
                     export_snapshot(exporter)
@@ -135,7 +125,7 @@ impl SnapshotLease {
             .client()
             .batch_execute("ROLLBACK")
             .await
-            .context("Roll back source table lock transaction")
+            .context("Roll back source coordinator transaction")
         else {
             return result;
         };

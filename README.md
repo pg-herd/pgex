@@ -455,9 +455,15 @@ after merging, including rules that might not match a table in this run.
 
 The default `shared` snapshot reads all source tables from one point in time.
 With `per-statement`, each source COPY sees its own snapshot; different tables can
-reflect different commits on a changing source. Both modes hold source table read
-locks until the run ends. Normal source writes can continue; the locks prevent
-conflicting schema changes.
+reflect different commits on a changing source. The parent holds no locks on the
+selected tables. A drop before COPY can fail the job. A truncate or table rewrite
+before the worker acquires its lock can make a table appear empty even under an
+earlier snapshot.
+
+Before a worker changes the destination for a table, it requests `ACCESS SHARE
+NOWAIT` on that source table and its descendants. If conflicting DDL is already
+queued, pgex reports the table and fails the job. Once acquired, the lock lasts
+until the worker’s source transaction ends.
 
 Destination table read locks and layout validation are enabled by default. Use
 `--no-target-locks` to skip those destination locks; it does not disable layout
@@ -468,7 +474,7 @@ disabled separately with `--target-validate-layouts false`.
 ### Transactions and parallelism
 
 Pgex copies whole tables in parallel, using 8 workers by default. Concurrency is
-capped by the source reader limit, also 8 by default. Source table locks and,
+capped by the source reader limit, also 8 by default. The source coordinator and,
 when enabled, destination table locks each use an additional connection.
 
 Each worker groups tables into a transaction. It keeps adding tables while its
@@ -478,7 +484,7 @@ with `--target-commit-group-mib`.
 
 A failed transaction rolls back that group's deletes and copies. Earlier committed
 groups remain applied; the entire run is not a single destination transaction.
-Loss of the source lock/snapshot session stops the workers and rolls back their
+Loss of the source coordinator session stops the workers and rolls back their
 unfinished destination transactions.
 
 ### Append and truncate
@@ -515,7 +521,7 @@ server-platform support for connection polling.
 
 All four source transaction timeouts default to 0 (disabled), replacing inherited
 role defaults on those sessions. Transaction lifetime limits require PostgreSQL
-17+. The source lock/snapshot session stays idle during transfer, so its idle
+17+. The source coordinator session stays idle during transfer, so its idle
 limit must accommodate that period. Reader limits apply to metadata and transfer
 reader transactions. All millisecond settings accept 0–2,147,483,647.
 
@@ -558,8 +564,8 @@ Use `--target-skip-delete=false`, for example, to explicitly disable a YAML sett
 | `--source-reader-limit N` | `source.snapshot.reader_connection_limit` | `8`; positive maximum number of concurrent source readers. |
 | `--source-row-security-off[=BOOL]` | `source.session.row_security_off` | `false`; fail statements subject to row security. |
 | `--client-connection-check-interval-ms N` | `source.snapshot.client_connection_check_interval_ms` | `1000`; disconnect-check interval, 0 disables it. |
-| `--source-exporter-transaction-timeout-ms N` | `source.snapshot.exporter_timeouts.transaction_ms` | `0`; source lock/snapshot transaction lifetime. Requires PostgreSQL 17+ when nonzero. |
-| `--source-exporter-idle-in-transaction-timeout-ms N` | `source.snapshot.exporter_timeouts.idle_in_transaction_ms` | `0`; source lock/snapshot session's idle time inside its transaction. |
+| `--source-exporter-transaction-timeout-ms N` | `source.snapshot.exporter_timeouts.transaction_ms` | `0`; source coordinator transaction lifetime. Requires PostgreSQL 17+ when nonzero. |
+| `--source-exporter-idle-in-transaction-timeout-ms N` | `source.snapshot.exporter_timeouts.idle_in_transaction_ms` | `0`; source coordinator session's idle time inside its transaction. |
 | `--source-reader-transaction-timeout-ms N` | `source.snapshot.reader_timeouts.transaction_ms` | `0`; each source reader transaction's lifetime. Requires PostgreSQL 17+ when nonzero. |
 | `--source-reader-idle-in-transaction-timeout-ms N` | `source.snapshot.reader_timeouts.idle_in_transaction_ms` | `0`; each source reader's idle time inside its transaction. |
 

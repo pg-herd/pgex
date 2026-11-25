@@ -637,7 +637,7 @@ async fn exporter_timeout_during_copy_closes_workers_and_restores_destination_ro
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!output.status.success());
     assert!(
-        stderr.contains("Source table lock session disconnected")
+        stderr.contains("Source coordinator session disconnected")
             && stderr.contains("idle-in-transaction timeout"),
         "{stderr}"
     );
@@ -787,4 +787,106 @@ async fn syncs_quoted_catalog_names_with_literal_filters_and_truncate() -> Resul
     source_session.close().await;
     target_session.close().await;
     Ok(())
+}
+
+#[tokio::test]
+async fn queued_source_ddl_fails_copy_before_destination_changes() -> Result<()> {
+    let (source, target) =
+        tokio::try_join!(PostgresTestDatabase::start(), PostgresTestDatabase::start())?;
+    let connector = source.connector().await?;
+    let observer = connector.connect().await?;
+    let gate = connector.connect().await?;
+    let target_session = target.connector().await?.connect().await?;
+    let schema = "CREATE TABLE public.items(id int) PARTITION BY RANGE (id);
+        CREATE TABLE public.items_leaf PARTITION OF public.items DEFAULT";
+    observer.client().batch_execute(schema).await?;
+    target_session.client().batch_execute(schema).await?;
+    observer
+        .client()
+        .batch_execute("INSERT INTO public.items VALUES (42)")
+        .await?;
+
+    for (truncate, queued_relation) in [(false, "items"), (true, "items_leaf")] {
+        target_session
+            .client()
+            .batch_execute("TRUNCATE public.items; INSERT INTO public.items VALUES (-1)")
+            .await?;
+        // A third session holds a compatible lock solely to keep the DDL queued.
+        gate.client()
+            .batch_execute(&format!(
+                "BEGIN; LOCK TABLE ONLY public.{queued_relation} IN ACCESS SHARE MODE"
+            ))
+            .await?;
+        let ddl = connector.connect().await?;
+        let alteration = tokio::spawn(async move {
+            ddl.client()
+                .batch_execute(&format!(
+                    "ALTER TABLE public.{queued_relation} ALTER COLUMN id SET DEFAULT 123"
+                ))
+                .await
+        });
+        waiting_relation_lock(observer.client(), queued_relation, "AccessExclusiveLock").await?;
+        let mut command = sync_command(&source, &source.connection_string, &target);
+        command.args(["--tables", "public.items"]);
+        if truncate {
+            command.args(["--target-truncate", "--source-snapshot", "per-statement"]);
+        }
+        let child = command
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()?;
+        let output = tokio::time::timeout(Duration::from_secs(5), child.wait_with_output())
+            .await
+            .context("COPY worker waited behind queued DDL")??;
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success());
+        assert!(
+            error.contains(r#"Acquire source COPY lock on "public"."items" without waiting"#)
+                && error.contains("could not obtain lock"),
+            "{error}"
+        );
+        gate.client().batch_execute("ROLLBACK").await?;
+        tokio::time::timeout(Duration::from_secs(5), alteration).await???;
+        let id: i32 = target_session
+            .client()
+            .query_one("SELECT id FROM public.items", &[])
+            .await?
+            .try_get(0)?;
+        assert_eq!(id, -1);
+
+        let retry = command.output().await?;
+        assert!(
+            retry.status.success(),
+            "{}",
+            String::from_utf8_lossy(&retry.stderr)
+        );
+        let id: i32 = target_session
+            .client()
+            .query_one("SELECT id FROM public.items", &[])
+            .await?
+            .try_get(0)?;
+        assert_eq!(id, 42);
+    }
+    Ok(())
+}
+
+async fn waiting_relation_lock(observer: &Client, relation: &str, mode: &str) -> Result<i32> {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let rows = observer
+                .query(
+                    "SELECT pid FROM pg_locks WHERE relation=to_regclass($1::text)
+                 AND mode=$2::text AND NOT granted",
+                    &[&relation, &mode],
+                )
+                .await?;
+            if let Some(row) = rows.first() {
+                return anyhow::Ok(row.try_get(0)?);
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .with_context(|| format!("Waiting for {mode} on {relation}"))?
 }

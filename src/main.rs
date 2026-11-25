@@ -80,8 +80,8 @@ async fn main() -> Result<()> {
     let runner = JobRunner::new(catalog, SnapshotLease::new(connector), target);
     runner
         .run(
+            &tables,
             SnapshotOptions {
-                tables: &tables,
                 client_connection_check_interval_ms: config
                     .source
                     .snapshot

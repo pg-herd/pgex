@@ -59,7 +59,7 @@ pub(super) async fn read_tables_on(
         .client()
         .query(include_str!("layouts.sql"), &[&schemas, &names])
         .await
-        .context("Read locked PostgreSQL table layouts")?;
+        .context("Read PostgreSQL table layouts")?;
 
     let layout_rows = rows
         .into_iter()

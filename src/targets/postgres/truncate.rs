@@ -4,7 +4,7 @@ use crate::{connection::Session, work_queue::WorkQueue};
 
 use super::{
     PostgresTable,
-    transfer::{CopyTransaction, copy_table, set_replica_role_if_enabled},
+    transfer::{CopyTransaction, copy_table, lock_source_for_copy, set_replica_role_if_enabled},
 };
 
 pub(super) async fn truncate_and_copy_tables(
@@ -14,6 +14,7 @@ pub(super) async fn truncate_and_copy_tables(
     replica_role: bool,
 ) -> Result<()> {
     while let Some(table) = queue.pop_front().await {
+        lock_source_for_copy(source, &table.name).await?;
         let relation = destination
             .client()
             .quote_qualified_identifier(table.name.schema(), table.name.table())

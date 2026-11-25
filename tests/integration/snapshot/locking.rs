@@ -2,30 +2,29 @@ use crate::postgres::sql_state;
 use anyhow::{Result, ensure};
 use pgex::connection::Client;
 
-use pgex::snapshot::SnapshotOptions;
+use pgex::snapshot::{SnapshotOptions, SourceReadMode};
 
 use super::with_snapshot_database;
 
 #[tokio::test]
-async fn selected_table_stays_locked_until_the_snapshot_scope_ends() -> Result<()> {
+async fn reader_releases_table_lock_while_coordinator_is_still_open() -> Result<()> {
     with_snapshot_database(async |snapshots, observer| {
         observer
             .batch_execute("CREATE TABLE public.snapshot_lock_probe (id bigint)")
             .await?;
-        let tables = ["public.snapshot_lock_probe".parse()?];
-
-        snapshots.with_snapshot(SnapshotOptions { tables: &tables, ..SnapshotOptions::default() },
-                async |_| {
-                    let lock = try_exclusive_lock(observer).await;
-                    ensure!(
-                        matches!(lock, Err(ref error) if sql_state(error).as_deref() == Some("55P03")),
-                        "expected the exporter to prevent an exclusive lock before opening a reader, got {lock:?}"
-                    );
-                    Ok::<_, anyhow::Error>(())
-                },
-            )
-            .await?;
-
+        for mode in [SourceReadMode::SharedSnapshot, SourceReadMode::ReadCommitted] {
+            snapshots.with_readers(SnapshotOptions::default(), mode, async |readers| {
+                try_exclusive_lock(observer).await?;
+                readers.with_reader(async |session| {
+                    session.client().batch_execute("SELECT * FROM public.snapshot_lock_probe").await?;
+                    ensure!(matches!(try_exclusive_lock(observer).await, Err(ref error) if sql_state(error).as_deref() == Some("55P03")),
+                        "the active reader must hold the relation lock");
+                    anyhow::Ok(())
+                }).await?;
+                try_exclusive_lock(observer).await?;
+                anyhow::Ok(())
+            }).await?;
+        }
         try_exclusive_lock(observer).await?;
         Ok(())
     })

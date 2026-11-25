@@ -3,6 +3,7 @@ use anyhow::{Context, Result};
 use bytes::{Buf, Bytes, BytesMut};
 
 use crate::connection::Session;
+use crate::table::QualifiedTable;
 
 use super::{
     PostgresTable,
@@ -19,6 +20,21 @@ pub(super) struct TableWriteResult {
 pub(super) enum CopyTransaction {
     Explicit,
     Implicit,
+}
+
+pub(super) async fn lock_source_for_copy(source: &Session, table: &QualifiedTable) -> Result<()> {
+    let relation = source
+        .client()
+        .quote_qualified_identifier(table.schema(), table.table())
+        .await?;
+    // Match COPY's SELECT FROM relation, including inheritance and partition children.
+    source
+        .client()
+        .batch_execute(&format!(
+            "LOCK TABLE {relation} IN ACCESS SHARE MODE NOWAIT"
+        ))
+        .await
+        .with_context(|| format!("Acquire source COPY lock on {relation} without waiting"))
 }
 
 pub(super) async fn copy_table(

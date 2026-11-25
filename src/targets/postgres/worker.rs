@@ -52,7 +52,7 @@ where
 
     let result = tokio::select! {
         biased;
-        _ = exporter_disconnected.changed() => Err(anyhow!("Source table lock session disconnected")),
+        _ = exporter_disconnected.changed() => Err(anyhow!("Source coordinator session disconnected")),
         result = async {
             while let Some(result) = results.recv().await {
                 result?;

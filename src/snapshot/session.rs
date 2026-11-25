@@ -30,7 +30,7 @@ impl<'scope> SnapshotReaders<'scope> {
     pub(super) fn new(
         source: Connector,
         key: Option<String>,
-        options: &SnapshotOptions<'_>,
+        options: &SnapshotOptions,
         exporter_disconnected: &'scope watch::Sender<()>,
     ) -> Self {
         Self {

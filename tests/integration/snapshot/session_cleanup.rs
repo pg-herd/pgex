@@ -60,37 +60,6 @@ async fn closes_snapshot_sessions_after_callback_failure() -> Result<()> {
 }
 
 #[tokio::test]
-async fn closes_exporting_session_when_postgresql_rejects_the_lock() -> Result<()> {
-    with_snapshot_database(async |snapshots, observer| {
-        let tables = [
-            "public.pgex_snapshot_missing_lock_target".parse()?,
-            "public.another_missing_table".parse()?,
-        ];
-        let result = snapshots
-            .with_snapshot(
-                SnapshotOptions {
-                    tables: &tables,
-                    ..SnapshotOptions::default()
-                },
-                async |_| -> Result<(), Infallible> {
-                    panic!("the callback ran after PostgreSQL rejected the lock");
-                },
-            )
-            .await;
-
-        ensure!(
-            matches!(result, Err(SnapshotScopeError::Setup(ref error))
-                if error.to_string() == r#"Table "public"."pgex_snapshot_missing_lock_target" does not exist"#
-                    && error.downcast_ref::<pgex::connection::Error>().and_then(sql_state).as_deref()
-                    == Some("42P01")),
-            "expected a missing table error, got {result:?}"
-        );
-        assert_sessions_closed(observer).await
-    })
-    .await
-}
-
-#[tokio::test]
 async fn closes_exporting_session_when_transaction_setup_fails() -> Result<()> {
     with_snapshot_database(async |snapshots, observer| {
         let result = snapshots
@@ -198,12 +167,10 @@ async fn exporter_timeout_closes_worker_sessions_and_rolls_back_destination_writ
              INSERT INTO public.exporter_loss_probe VALUES ('original')",
         )
         .await?;
-    let tables = ["public.exporter_loss_probe".parse()?];
     let snapshots = SnapshotLease::new(connector.clone());
     let (write_finished, mut write_ready) = oneshot::channel();
     let scope = snapshots.with_snapshot(
         SnapshotOptions {
-            tables: &tables,
             exporter_timeouts: SnapshotTimeouts {
                 idle_in_transaction_ms: 1_500,
                 ..SnapshotTimeouts::default()
