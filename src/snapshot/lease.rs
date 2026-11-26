@@ -44,19 +44,9 @@ impl SnapshotLease {
         Self { source }
     }
 
-    /// Holds an exporting transaction and its session for the duration of the callback.
-    /// Stops the callback if the exporter disconnects.
+    /// Keeps the source coordinator open while readers use the selected snapshot mode.
+    /// Stops the callback if the coordinator disconnects.
     pub async fn with_snapshot<T, E>(
-        &self,
-        options: SnapshotOptions,
-        work: impl for<'scope> AsyncFnOnce(SnapshotReaders<'scope>) -> Result<T, E>,
-    ) -> Result<T, SnapshotScopeError<E>> {
-        self.with_readers(options, SourceReadMode::SharedSnapshot, work)
-            .await
-    }
-
-    /// Keeps the source coordinator session open while the callback opens readers in the selected mode.
-    pub async fn with_readers<T, E>(
         &self,
         options: SnapshotOptions,
         mode: SourceReadMode,

@@ -5,7 +5,9 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use pgex::connection::Client;
 
-use pgex::snapshot::{SnapshotOptions, SnapshotScopeError, SnapshotTimeouts};
+use pgex::snapshot::{
+    SnapshotOptions, SnapshotScopeError, SnapshotTimeouts, SourceReadMode::SharedSnapshot,
+};
 
 use super::with_snapshot_database;
 
@@ -22,6 +24,7 @@ async fn disconnect_check_interval_override_is_limited_to_snapshot_work() -> Res
                     client_connection_check_interval_ms: 250,
                     ..SnapshotOptions::default()
                 },
+                SharedSnapshot,
                 async |readers| {
                     let interval = readers
                         .with_reader(async |session| {
@@ -78,7 +81,7 @@ async fn readers_disable_inherited_timeouts_and_apply_explicit_overrides() -> Re
                 ..SnapshotOptions::default()
             };
             let actual = snapshots
-                .with_snapshot(options, async |readers| {
+                .with_snapshot(options, SharedSnapshot, async |readers| {
                     readers
                         .with_reader(async |session| read_timeouts(session.client()).await)
                         .await
@@ -118,6 +121,7 @@ async fn reader_transaction_timeout_replaces_inherited_timer_and_stops_active_wo
                     },
                     ..SnapshotOptions::default()
                 },
+                SharedSnapshot,
                 async |readers| {
                     let reader = readers.with_reader(async |session| {
                         session.client().batch_execute("SELECT pg_sleep(10)").await
@@ -167,6 +171,7 @@ async fn exporter_timeouts_release_its_session_while_work_is_pending() -> Result
                     exporter_timeouts,
                     ..SnapshotOptions::default()
                 },
+                SharedSnapshot,
                 async |_| std::future::pending::<Result<()>>().await,
             );
             let result = tokio::time::timeout(Duration::from_secs(5), scope)

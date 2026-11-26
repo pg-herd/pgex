@@ -8,7 +8,7 @@ use clap::Parser;
 use tokio::io::{self, AsyncWriteExt};
 
 use cli::{Cli, resolve_password};
-use job_runner::JobRunner;
+use job_runner::{JobRunner, SyncJob};
 use pgex::{
     catalog::CatalogReader,
     config::{
@@ -77,9 +77,11 @@ async fn main() -> Result<()> {
         SnapshotMode::Shared => SourceReadMode::SharedSnapshot,
         SnapshotMode::PerStatement => SourceReadMode::ReadCommitted,
     };
-    let runner = JobRunner::new(catalog, SnapshotLease::new(connector), target);
+    let job = SyncJob::new(target, config.source.selection.filters);
+    let runner = JobRunner::new(catalog, SnapshotLease::new(connector));
     runner
         .run(
+            &job,
             &tables,
             SnapshotOptions {
                 client_connection_check_interval_ms: config
@@ -92,7 +94,6 @@ async fn main() -> Result<()> {
                 reader_timeouts: config.source.snapshot.reader_timeouts,
             },
             read_mode,
-            &config.source.selection.filters,
         )
         .await?;
     let mut stdout = io::stdout();

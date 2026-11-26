@@ -2,7 +2,7 @@ use pgex::connection::Row;
 use std::{future::poll_fn, num::NonZeroUsize, task::Poll};
 
 use anyhow::{Result, ensure};
-use pgex::snapshot::SnapshotOptions;
+use pgex::snapshot::{SnapshotOptions, SourceReadMode::SharedSnapshot};
 use tokio::sync::oneshot;
 
 use super::with_snapshot_database;
@@ -16,6 +16,7 @@ async fn waits_for_a_source_reader_slot_and_releases_it_after_cancellation() -> 
                     reader_connection_limit: NonZeroUsize::MIN,
                     ..SnapshotOptions::default()
                 },
+                SharedSnapshot,
                 async |readers| {
                     let (started, ready) = oneshot::channel();
                     let mut first = Box::pin(readers.with_reader(async move |_| {

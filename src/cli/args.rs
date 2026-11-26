@@ -155,7 +155,7 @@ pub(crate) struct Cli {
     #[arg(hide_short_help = true, long, value_name = "BOOL", hide_possible_values = true, help_heading = "Transfers", num_args = 0..=1, require_equals = true, default_missing_value = "true")]
     target_skip_delete: Option<bool>,
 
-    /// TRUNCATE tables with CASCADE before COPY, committing separately.
+    /// TRUNCATE tables with CASCADE and COPY in one transaction per table.
     #[arg(hide_short_help = true, long, value_name = "BOOL", hide_possible_values = true, help_heading = "Transfers", num_args = 0..=1, require_equals = true, default_missing_value = "true")]
     target_truncate: Option<bool>,
 

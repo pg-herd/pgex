@@ -8,7 +8,10 @@ use tokio::sync::oneshot;
 
 use pgex::{
     connection::Connector,
-    snapshot::{SnapshotLease, SnapshotOptions, SnapshotScopeError, SnapshotTimeouts},
+    snapshot::{
+        SnapshotLease, SnapshotOptions, SnapshotScopeError, SnapshotTimeouts,
+        SourceReadMode::SharedSnapshot,
+    },
 };
 
 use super::{PostgresTestDatabase, with_snapshot_database};
@@ -17,14 +20,18 @@ use super::{PostgresTestDatabase, with_snapshot_database};
 async fn closes_snapshot_sessions_after_success() -> Result<()> {
     with_snapshot_database(async |snapshots, observer| {
         snapshots
-            .with_snapshot(SnapshotOptions::default(), async |readers| {
-                readers
-                    .with_reader(async |session| {
-                        session.client().query_one("SELECT 1", &[]).await?;
-                        Ok::<_, pgex::connection::Error>(())
-                    })
-                    .await
-            })
+            .with_snapshot(
+                SnapshotOptions::default(),
+                SharedSnapshot,
+                async |readers| {
+                    readers
+                        .with_reader(async |session| {
+                            session.client().query_one("SELECT 1", &[]).await?;
+                            Ok::<_, pgex::connection::Error>(())
+                        })
+                        .await
+                },
+            )
             .await?;
         assert_sessions_closed(observer).await
     })
@@ -37,14 +44,18 @@ async fn closes_snapshot_sessions_after_callback_failure() -> Result<()> {
 
     with_snapshot_database(async |snapshots, observer| {
         let result = snapshots
-            .with_snapshot(SnapshotOptions::default(), async |readers| {
-                readers
-                    .with_reader(async |session| {
-                        session.client().query_one("SELECT 1", &[]).await?;
-                        Err::<(), _>(anyhow::anyhow!(CALLBACK_FAILURE))
-                    })
-                    .await
-            })
+            .with_snapshot(
+                SnapshotOptions::default(),
+                SharedSnapshot,
+                async |readers| {
+                    readers
+                        .with_reader(async |session| {
+                            session.client().query_one("SELECT 1", &[]).await?;
+                            Err::<(), _>(anyhow::anyhow!(CALLBACK_FAILURE))
+                        })
+                        .await
+                },
+            )
             .await;
         ensure!(
             matches!(
@@ -68,6 +79,7 @@ async fn closes_exporting_session_when_transaction_setup_fails() -> Result<()> {
                     client_connection_check_interval_ms: u32::MAX,
                     ..SnapshotOptions::default()
                 },
+                SharedSnapshot,
                 async |_| -> Result<(), Infallible> {
                     panic!("the callback ran after transaction setup failed");
                 },
@@ -106,6 +118,7 @@ async fn closes_exporting_session_when_postgresql_rejects_snapshot_export() -> R
     let result = SnapshotLease::new(source)
         .with_snapshot(
             SnapshotOptions::default(),
+            SharedSnapshot,
             async |_| -> Result<(), Infallible> {
                 panic!("the callback ran after PostgreSQL rejected snapshot export");
             },
@@ -127,7 +140,7 @@ async fn closes_exporting_session_when_postgresql_rejects_snapshot_export() -> R
 async fn exporter_disconnect_stops_the_snapshot_callback() -> Result<()> {
     with_snapshot_database(async |snapshots, observer| {
         let result = snapshots
-            .with_snapshot(SnapshotOptions::default(), async |_| {
+            .with_snapshot(SnapshotOptions::default(), SharedSnapshot, async |_| {
                 // The observer and the exporter are the only sessions in this database.
                 let terminated: bool = observer
                     .query_one(
@@ -177,6 +190,7 @@ async fn exporter_timeout_closes_worker_sessions_and_rolls_back_destination_writ
             },
             ..SnapshotOptions::default()
         },
+        SharedSnapshot,
         async move |readers| {
             readers
                 .with_reader(async move |source| {
@@ -227,38 +241,42 @@ async fn preserves_work_error_when_reader_rollback_fails() -> Result<()> {
 
     with_snapshot_database(async |snapshots, observer| {
         snapshots
-            .with_snapshot(SnapshotOptions::default(), async |readers| {
-                let result: Result<(), _> = readers
-                    .with_reader(async |session| {
-                        let pid: i32 = session
-                            .client()
-                            .query_one("SELECT pg_backend_pid()", &[])
-                            .await?
-                            .try_get(0)?;
-                        let terminated: bool = observer
-                            .query_one("SELECT pg_terminate_backend($1, 5000)", &[&pid])
-                            .await?
-                            .try_get(0)?;
-                        ensure!(terminated, "could not terminate the reader session");
-                        anyhow::bail!(WORK_FAILURE);
-                    })
-                    .await;
+            .with_snapshot(
+                SnapshotOptions::default(),
+                SharedSnapshot,
+                async |readers| {
+                    let result: Result<(), _> = readers
+                        .with_reader(async |session| {
+                            let pid: i32 = session
+                                .client()
+                                .query_one("SELECT pg_backend_pid()", &[])
+                                .await?
+                                .try_get(0)?;
+                            let terminated: bool = observer
+                                .query_one("SELECT pg_terminate_backend($1, 5000)", &[&pid])
+                                .await?
+                                .try_get(0)?;
+                            ensure!(terminated, "could not terminate the reader session");
+                            anyhow::bail!(WORK_FAILURE);
+                        })
+                        .await;
 
-                let Err(SnapshotScopeError::Rollback {
-                    error,
-                    prior_failure: Some(failure),
-                }) = result
-                else {
-                    anyhow::bail!("expected both work and rollback errors, got {result:?}");
-                };
-                ensure!(
-                    matches!(*failure, SnapshotScopeError::Work(ref error)
+                    let Err(SnapshotScopeError::Rollback {
+                        error,
+                        prior_failure: Some(failure),
+                    }) = result
+                    else {
+                        anyhow::bail!("expected both work and rollback errors, got {result:?}");
+                    };
+                    ensure!(
+                        matches!(*failure, SnapshotScopeError::Work(ref error)
                     if error.to_string() == WORK_FAILURE),
-                    "expected the original work error"
-                );
-                assert_eq!(error.to_string(), "Roll back source reader");
-                Ok::<_, anyhow::Error>(())
-            })
+                        "expected the original work error"
+                    );
+                    assert_eq!(error.to_string(), "Roll back source reader");
+                    Ok::<_, anyhow::Error>(())
+                },
+            )
             .await?;
         assert_sessions_closed(observer).await
     })
@@ -269,7 +287,7 @@ async fn preserves_work_error_when_reader_rollback_fails() -> Result<()> {
 async fn closes_exporting_and_read_sessions_when_the_scope_is_cancelled() -> Result<()> {
     with_snapshot_database(async |snapshots, observer| {
         let (reader_started, started) = oneshot::channel();
-        let mut scope = Box::pin(snapshots.with_snapshot(SnapshotOptions::default(),
+        let mut scope = Box::pin(snapshots.with_snapshot(SnapshotOptions::default(), SharedSnapshot,
             async move |readers| {
                 readers.with_reader(async move |_| {
                         reader_started.send(()).unwrap();
@@ -297,7 +315,7 @@ async fn closes_snapshot_sessions_when_cancelled_during_an_active_query() -> Res
     const LONG_QUERY: &str = "SELECT pg_sleep(30) /* snapshot cancellation probe */";
 
     with_snapshot_database(async |snapshots, observer| {
-        let mut scope = Box::pin(snapshots.with_snapshot(SnapshotOptions::default(),
+        let mut scope = Box::pin(snapshots.with_snapshot(SnapshotOptions::default(), SharedSnapshot,
             async |readers| {
                 readers.with_reader(async |session| {
                         session.client().query_one(LONG_QUERY, &[]).await.map(|_| ())

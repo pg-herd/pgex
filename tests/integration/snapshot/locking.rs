@@ -13,7 +13,7 @@ async fn reader_releases_table_lock_while_coordinator_is_still_open() -> Result<
             .batch_execute("CREATE TABLE public.snapshot_lock_probe (id bigint)")
             .await?;
         for mode in [SourceReadMode::SharedSnapshot, SourceReadMode::ReadCommitted] {
-            snapshots.with_readers(SnapshotOptions::default(), mode, async |readers| {
+            snapshots.with_snapshot(SnapshotOptions::default(), mode, async |readers| {
                 try_exclusive_lock(observer).await?;
                 readers.with_reader(async |session| {
                     session.client().batch_execute("SELECT * FROM public.snapshot_lock_probe").await?;
