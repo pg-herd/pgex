@@ -6,6 +6,13 @@ rust-version = "1.99.1"
 license = "MIT"
 publish = false
 
+[workspace]
+members = ["crates/pg-dump-planner"]
+
+[workspace.dependencies]
+prost = "=0.14.6"
+pq-sys = "=0.7.9"
+
 [dependencies]
 anyhow = "1.0.105"
 bytes = "1.12.2"
@@ -18,7 +25,7 @@ tokio = { version = "1", features = ["fs", "io-std", "io-util", "macros", "rt", 
 unicode-width = { version = "0.2", default-features = false }
 
 libc = "0.2"
-pq-sys = "=0.7.9"
+pq-sys.workspace = true
 postgres-types = { version = "0.2", features = ["with-time-0_3"] }
 
 [dev-dependencies]

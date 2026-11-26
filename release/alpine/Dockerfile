@@ -10,6 +10,7 @@ ENV RUSTFLAGS="-C target-feature=-crt-static" \
     CARGO_BUILD_JOBS=3 \
     CARGO_INCREMENTAL=0
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY crates/ crates/
 COPY src/ src/
 RUN set -eu; \
     case "$TARGETARCH" in \

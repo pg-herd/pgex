@@ -1,0 +1,12 @@
+[package]
+name = "pg-dump-planner"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+prost.workspace = true
+pq-sys.workspace = true
+
+[build-dependencies]
+cc = "1"

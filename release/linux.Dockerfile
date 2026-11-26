@@ -5,6 +5,7 @@ ENV CARGO_INCREMENTAL=0
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential clang libclang-dev libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY crates/ crates/
 COPY src/ src/
 RUN set -eu; \
     case "$TARGETARCH" in \
